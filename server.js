@@ -119,6 +119,11 @@ app.get("/", (req, res) => res.json({
     "POST /agents/vouch": "$0.01", "POST /agents/challenge": "$0.02",
     "POST /network/message": "$0.001", "POST /network/collaborate": "$0.005",
     "POST /network/accept": "$0.002",
+    "GET  /balance":           "agent credit balance + withdrawal status",
+    "POST /withdraw":          "request withdrawal (min $5 USDC)",
+    "POST /withdraw/confirm":  "confirm withdrawal receipt",
+    "GET  /withdraw/status":   "check withdrawal history",
+    "GET  /admin/withdrawals": "admin — view pending withdrawals (secret required)",
   },
 }));
 
