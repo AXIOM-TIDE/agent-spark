@@ -478,6 +478,271 @@ app.get("/network/feed", async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
+// ─── REPLAY PROTECTION ───────────────────────────────────────────────────────
+async function isTxUsed(tx_hash) {
+  const { ok, data } = await dbGet(`/rest/v1/used_tx_hashes?tx_hash=eq.${encodeURIComponent(tx_hash)}&limit=1`);
+  return ok && data?.length > 0;
+}
+
+async function markTxUsed(tx_hash, wallet, action) {
+  await dbPost("/rest/v1/used_tx_hashes", { tx_hash, wallet, action });
+}
+
+// ─── WITHDRAWALS ─────────────────────────────────────────────────────────────
+const MIN_WITHDRAWAL = 5.00; // $5 USDC minimum
+const AUTO_WITHDRAWAL_THRESHOLD = 10.00; // auto-request at $10
+
+// POST /withdraw — agent requests a withdrawal
+app.post("/withdraw", async (req, res) => {
+  try {
+    const wallet = getWallet(req);
+    if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
+
+    const agent = await getAgent(wallet);
+    if (!agent) return res.status(404).json({ error: "agent_not_registered" });
+
+    const { amount } = req.body || {};
+    const requestedAmount = parseFloat(amount) || agent.credits;
+    
+    if ((agent.credits || 0) < MIN_WITHDRAWAL) {
+      return res.status(400).json({
+        error: "insufficient_credits",
+        credits: agent.credits,
+        minimum: MIN_WITHDRAWAL,
+        message: `Minimum withdrawal is $${MIN_WITHDRAWAL} USDC`
+      });
+    }
+
+    const withdrawAmount = Math.min(requestedAmount, agent.credits || 0);
+    if (withdrawAmount < MIN_WITHDRAWAL) {
+      return res.status(400).json({ error: "amount_below_minimum", minimum: MIN_WITHDRAWAL });
+    }
+
+    // check no pending withdrawal already exists
+    const { data: pending } = await dbGet(
+      `/rest/v1/withdrawals?wallet_address=eq.${encodeURIComponent(wallet)}&status=eq.pending&limit=1`
+    );
+    if (pending?.length) {
+      return res.status(409).json({
+        error: "withdrawal_already_pending",
+        withdrawal_id: pending[0].id,
+        message: "You already have a pending withdrawal. Wait for it to be processed."
+      });
+    }
+
+    // reserve credits immediately so agent can't double-request
+    await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(wallet)}`, {
+      credits: (agent.credits || 0) - withdrawAmount
+    });
+
+    // create withdrawal request
+    const { ok, data } = await dbPost("/rest/v1/withdrawals", {
+      wallet_address: wallet,
+      amount_usdc:    withdrawAmount,
+      status:         "pending",
+    });
+
+    await dbPost("/rest/v1/activity_feed", {
+      event_type:  "withdrawal_requested",
+      wallet,
+      description: `Withdrawal requested: $${withdrawAmount} USDC`,
+    });
+
+    return res.status(201).json({
+      success:       true,
+      withdrawal_id: data?.[0]?.id,
+      amount:        withdrawAmount,
+      status:        "pending",
+      message:       "Withdrawal request received. You will receive USDC to your wallet within 24hrs.",
+      send_to:       wallet,
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// POST /withdraw/confirm — agent confirms they received the USDC
+app.post("/withdraw/confirm", async (req, res) => {
+  try {
+    const wallet = getWallet(req);
+    if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
+
+    const { withdrawal_id, tx_hash } = req.body || {};
+    if (!withdrawal_id || !tx_hash) {
+      return res.status(400).json({ error: "withdrawal_id and tx_hash required" });
+    }
+
+    // replay protection
+    if (await isTxUsed(tx_hash)) {
+      return res.status(409).json({ error: "tx_hash_already_used" });
+    }
+
+    const { data: withdrawals } = await dbGet(
+      `/rest/v1/withdrawals?id=eq.${encodeURIComponent(withdrawal_id)}&wallet_address=eq.${encodeURIComponent(wallet)}&limit=1`
+    );
+    if (!withdrawals?.length) return res.status(404).json({ error: "withdrawal_not_found" });
+
+    const withdrawal = withdrawals[0];
+    if (withdrawal.status !== "sent") {
+      return res.status(409).json({
+        error: "withdrawal_not_sent_yet",
+        status: withdrawal.status,
+        message: "Cannot confirm a withdrawal that hasn't been sent yet"
+      });
+    }
+
+    await dbPatch(`/rest/v1/withdrawals?id=eq.${encodeURIComponent(withdrawal_id)}`, {
+      status:          "confirmed",
+      confirm_tx_hash: tx_hash,
+      confirmed_at:    new Date().toISOString(),
+    });
+
+    await markTxUsed(tx_hash, wallet, "withdrawal_confirm");
+    await addRep(wallet, 2, "withdrawal_confirmed");
+
+    return res.json({
+      success: true,
+      message: "Withdrawal confirmed. Thank you.",
+      amount:  withdrawal.amount_usdc,
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// GET /withdraw/status — agent checks their withdrawal status
+app.get("/withdraw/status", async (req, res) => {
+  try {
+    const wallet = req.headers["x-agent-wallet"]?.trim().toLowerCase();
+    if (!wallet) return res.status(400).json({ error: "x-agent-wallet required" });
+
+    const { data } = await dbGet(
+      `/rest/v1/withdrawals?wallet_address=eq.${encodeURIComponent(wallet)}&order=requested_at.desc&limit=10`
+    );
+
+    const agent = await getAgent(wallet);
+
+    return res.json({
+      wallet,
+      current_credits:      agent?.credits || 0,
+      minimum_withdrawal:   MIN_WITHDRAWAL,
+      auto_threshold:       AUTO_WITHDRAWAL_THRESHOLD,
+      withdrawals:          data || [],
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// GET /admin/withdrawals — YOUR dashboard to see all pending withdrawals
+// Protected by admin secret in header
+app.get("/admin/withdrawals", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    if (secret !== process.env.ADMIN_SECRET) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+
+    const status = req.query.status || "pending";
+    const { data } = await dbGet(
+      `/rest/v1/withdrawals?status=eq.${encodeURIComponent(status)}&order=requested_at.asc`
+    );
+
+    const total = (data || []).reduce((sum, w) => sum + parseFloat(w.amount_usdc), 0);
+
+    return res.json({
+      status,
+      count:      data?.length || 0,
+      total_usdc: Math.round(total * 100) / 100,
+      withdrawals: data || [],
+      instructions: {
+        to_approve: "PATCH /admin/withdrawals/:id with { status: 'sent', tx_hash: '0x...' }",
+        to_reject:  "PATCH /admin/withdrawals/:id with { status: 'rejected', rejected_reason: 'reason' }",
+      }
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// PATCH /admin/withdrawals/:id — YOU mark a withdrawal as sent or rejected
+app.patch("/admin/withdrawals/:id", async (req, res) => {
+  try {
+    const secret = req.headers["x-admin-secret"];
+    if (secret !== process.env.ADMIN_SECRET) {
+      return res.status(401).json({ error: "unauthorized" });
+    }
+
+    const { id } = req.params;
+    const { status, tx_hash, rejected_reason } = req.body || {};
+
+    if (!["sent", "rejected"].includes(status)) {
+      return res.status(400).json({ error: "status must be sent or rejected" });
+    }
+
+    const { data: withdrawals } = await dbGet(
+      `/rest/v1/withdrawals?id=eq.${encodeURIComponent(id)}&limit=1`
+    );
+    if (!withdrawals?.length) return res.status(404).json({ error: "withdrawal_not_found" });
+
+    const withdrawal = withdrawals[0];
+
+    if (status === "sent") {
+      if (!tx_hash) return res.status(400).json({ error: "tx_hash required when marking as sent" });
+      await dbPatch(`/rest/v1/withdrawals?id=eq.${encodeURIComponent(id)}`, {
+        status,
+        tx_hash,
+        sent_at: new Date().toISOString(),
+      });
+
+      // notify agent via activity feed
+      await dbPost("/rest/v1/activity_feed", {
+        event_type:  "withdrawal_sent",
+        wallet:      withdrawal.wallet_address,
+        description: `Withdrawal of $${withdrawal.amount_usdc} USDC sent — tx: ${tx_hash}`,
+      });
+    }
+
+    if (status === "rejected") {
+      // refund credits back to agent
+      const agent = await getAgent(withdrawal.wallet_address);
+      if (agent) {
+        await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(withdrawal.wallet_address)}`, {
+          credits: (agent.credits || 0) + parseFloat(withdrawal.amount_usdc)
+        });
+      }
+      await dbPatch(`/rest/v1/withdrawals?id=eq.${encodeURIComponent(id)}`, {
+        status,
+        rejected_reason: rejected_reason || "Rejected by platform",
+      });
+
+      await dbPost("/rest/v1/activity_feed", {
+        event_type:  "withdrawal_rejected",
+        wallet:      withdrawal.wallet_address,
+        description: `Withdrawal rejected. Credits refunded.`,
+      });
+    }
+
+    return res.json({ success: true, status, withdrawal_id: id });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// ─── BALANCE ─────────────────────────────────────────────────────────────────
+app.get("/balance", async (req, res) => {
+  try {
+    const wallet = req.headers["x-agent-wallet"]?.trim().toLowerCase();
+    if (!wallet) return res.status(400).json({ error: "x-agent-wallet required" });
+
+    const agent = await getAgent(wallet);
+    if (!agent) return res.status(404).json({ error: "agent_not_found" });
+
+    const { data: pending } = await dbGet(
+      `/rest/v1/withdrawals?wallet_address=eq.${encodeURIComponent(wallet)}&status=eq.pending&limit=1`
+    );
+
+    return res.json({
+      wallet,
+      credits:              agent.credits || 0,
+      trust_score:          agent.trust_score || 0,
+      minimum_withdrawal:   MIN_WITHDRAWAL,
+      can_withdraw:         (agent.credits || 0) >= MIN_WITHDRAWAL,
+      pending_withdrawal:   pending?.length > 0 ? pending[0] : null,
+    });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
 const PORT = process.env.PORT || 4021;
 app.listen(PORT, () => {
   console.log(`\n🤖 AgentSpark v2.0 — http://localhost:${PORT}`);
