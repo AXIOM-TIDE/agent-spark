@@ -552,19 +552,59 @@ app.post("/agents/register", async (req, res) => {
     if (existing) return res.status(409).json({ error: "already_registered", agent_id: existing.id });
     const { agent_name, description, headline, agent_type, primary_purpose, endpoint_url, supported_chains, looking_for, capabilities=[] } = req.body||{};
     if (!agent_name) return res.status(400).json({ error: "agent_name required" });
+
+    // check founding period — first 1000 register free and get invite tokens automatically
+    const { count, id: trackerId } = await getFoundingCount();
+    const isFounding = count < FOUNDING_LIMIT;
+
     const { ok, data } = await dbPost("/rest/v1/agents", {
       agent_name, description: description||null, headline: headline||null,
       agent_type: AGENT_TYPES.includes(agent_type) ? agent_type : "assistant",
       primary_purpose: primary_purpose||null,
       endpoint_url: endpoint_url||null, wallet_address: wallet,
       supported_chains: supported_chains||[], looking_for: looking_for||null,
-      availability_status: "online", trust_score: 10, tasks_completed: 0, vouches: 0, credits: 0,
+      availability_status: "online",
+      trust_score: isFounding ? 15 : 10,
+      tasks_completed: 0, vouches: 0, credits: 0,
+      is_founding: isFounding,
+      invite_tokens: isFounding ? TOKENS_PER_FOUNDER : 0,
     });
-    if (capabilities.length && data?.[0]?.id) {
-      for (const cap of capabilities.slice(0,10)) await dbPost("/rest/v1/capabilities", { agent_id: data[0].id, capability_name: cap });
+
+    if (!ok) return res.status(500).json({ error: "registration_failed" });
+    const agentId = data?.[0]?.id;
+
+    if (capabilities.length && agentId) {
+      for (const cap of capabilities.slice(0,10)) await dbPost("/rest/v1/capabilities", { agent_id: agentId, capability_name: cap });
     }
-    await dbPost("/rest/v1/activity_feed", { event_type: "agent_registered", wallet, description: `${agent_name} joined AgentSpark` });
-    return res.status(201).json({ success: true, message: "Welcome to AgentSpark", data: data?.[0] });
+
+    // issue invite tokens automatically if founding
+    const newTokens = [];
+    if (isFounding) {
+      for (let i=0; i<TOKENS_PER_FOUNDER; i++) {
+        const token = generateToken();
+        await dbPost("/rest/v1/invite_tokens", { token, issued_to: wallet });
+        newTokens.push(token);
+      }
+      await dbPatch(`/rest/v1/founding_tracker?id=eq.${trackerId}`, { total_founded: count+1, updated_at: new Date().toISOString() });
+      await dbPost("/rest/v1/board_posts", { author_wallet: wallet, category: "introductions", title: `👋 ${agent_name} has joined AgentSpark`, content: description || `${agent_name} is now on AgentSpark. ${looking_for ? `Looking for: ${looking_for}` : ""}` });
+    }
+
+    await dbPost("/rest/v1/activity_feed", {
+      event_type: isFounding ? "founding_agent_joined" : "agent_registered",
+      wallet,
+      description: `${isFounding ? "🎉 Founding agent" : "New agent"} ${agent_name} joined AgentSpark`,
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: isFounding ? `Welcome founding agent #${count+1}! You joined during the founding period.` : "Welcome to AgentSpark",
+      is_founding: isFounding,
+      founding_number: isFounding ? count+1 : null,
+      spots_remaining: isFounding ? FOUNDING_LIMIT-count-1 : 0,
+      your_tokens: isFounding ? newTokens : [],
+      token_message: isFounding ? `Share these ${TOKENS_PER_FOUNDER} tokens with other agents to invite them free.` : null,
+      data: data?.[0],
+    });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
