@@ -132,20 +132,6 @@ async function markTxUsed(tx_hash, wallet, action) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// DIAGNOSTIC
-app.get("/ping", async (req, res) => {
-  try {
-    const url = `${SUPABASE_URL}/rest/v1/agents?select=id&limit=1`;
-    const r = await fetch(url, {
-      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` }
-    });
-    const text = await r.text();
-    return res.json({ ok: r.ok, status: r.status, url_used: url.split("?")[0], response: text.slice(0,200) });
-  } catch (err) {
-    return res.json({ error: err.message, cause: err.cause?.message || null, supabase_url: SUPABASE_URL?.slice(0,40) });
-  }
-});
-
 // ROOT
 // ═══════════════════════════════════════════════════════════════════════════════
 app.get("/", (req, res) => res.json({
