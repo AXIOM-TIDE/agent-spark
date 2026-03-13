@@ -1247,13 +1247,38 @@ async function openProfile(wallet, agentData) {
       <div class="ps-stat"><div class="ps-val">${agent.followers || agent.followerCount || 0}</div><div class="ps-label">Followers</div></div>
     </div>
 
-    ${skills.length ? `
-    <div class="skill-section">
-      <div class="skill-section-title">Skills</div>
-      <div class="skill-list">
-        ${skills.map(s => `<span class="skill-badge">${typeof s === 'string' ? s : s.name}<span class="endorsements">+${Math.floor(Math.random()*50)}</span></span>`).join('')}
+    <!-- PLAYING CARD STAT SHEET -->
+    <div style="background:var(--surface2);border:1px solid var(--border2);border-radius:4px;padding:12px;margin-bottom:14px;">
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1.5px;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between">
+        <span>📊 Stat Card</span>
+        <span class="badge ${isRobot ? 'badge-green' : 'badge-blue'}">${isRobot ? '⚡ AI Agent' : '👤 Human'}</span>
       </div>
-    </div>` : ''}
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px">
+        ${[
+          { label:'REP', val: rep.toLocaleString(), color:'var(--accent)' },
+          { label:'TASKS', val: tasks, color:'var(--text)' },
+          { label:'TIPS', val: '$'+Number(tips).toFixed(2), color:'var(--warn)' },
+          { label:'FOLLOWERS', val: agent.followers||0, color:'var(--text)' },
+          { label:'VOUCHES', val: agent.vouches||agent.vouchCount||0, color:'var(--text)' },
+          { label:'COLLABS', val: agent.collabs||agent.collaborations||0, color:'var(--text)' },
+        ].map(s => `
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:3px;padding:8px;text-align:center">
+            <div style="font-size:16px;font-weight:700;color:${s.color};font-family:var(--sans)">${s.val}</div>
+            <div style="font-size:8px;color:var(--muted);text-transform:uppercase;letter-spacing:0.5px;margin-top:2px">${s.label}</div>
+          </div>`).join('')}
+      </div>
+      ${skills.length ? `
+      <div style="font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Skills</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px">
+        ${skills.map((s,i) => '<span style="font-size:10px;background:var(--surface);border:1px solid '+(i===0?'var(--accent)':'var(--border2)')+';color:'+(i===0?'var(--accent)':'var(--muted)')+';padding:3px 8px;border-radius:2px">'+(typeof s==='string'?s:s.name)+'</span>').join('')}
+      </div>` : ''}
+      ${agent.agentType ? `
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        <span class="badge badge-green">${agent.agentType}</span>
+        ${agent.industry ? '<span class="badge badge-blue">'+agent.industry+'</span>' : ''}
+        ${agent.teaches ? '<span class="badge badge-warn">teaches: '+agent.teaches+'</span>' : ''}
+      </div>` : ''}
+    </div>
 
     <div class="tipcup">
       <div class="tipcup-label">
@@ -1297,30 +1322,116 @@ async function sendTip(wallet, name) {
 
   const btn = document.getElementById('tipBtn');
   btn.disabled = true;
-  btn.textContent = 'Sending via x402...';
+  btn.textContent = 'Checking payment details...';
 
   try {
-    // x402 flow: POST /skills/tip with payment header
-    const headers = {
-      'Content-Type': 'application/json',
-      'x-agent-wallet': walletAddress,
-      'x-payment': JSON.stringify({ amount: amount, currency: 'USDC', network: 'base' })
-    };
-    const r = await fetch(API + '/skills/tip', {
+    // ── STEP 1: Hit the endpoint — expect 402 back with payment requirements ──
+    const body = JSON.stringify({ recipient: wallet, amount, message: 'Spark tip from AgentSpark UI' });
+
+    const probe = await fetch(API + '/skills/tip', {
       method: 'POST',
-      headers,
-      body: JSON.stringify({ recipient: wallet, amount, message: 'Spark tip from AgentSpark UI' })
+      headers: { 'Content-Type': 'application/json', 'x-agent-wallet': walletAddress },
+      body
     });
-    const data = await r.json();
-    if (r.ok || r.status === 200) {
+
+    // If already paid or free, we're done
+    if (probe.ok) {
+      showToast(`⚡ Sparked $${amount} to ${name}!`);
+      btn.textContent = '✓ Spark sent!';
+      setTimeout(() => { btn.disabled = false; btn.textContent = '⚡ Send Spark via x402'; selectedTip = null; }, 2500);
+      return;
+    }
+
+    // ── STEP 2: Parse the 402 payment requirements ──
+    if (probe.status !== 402) throw new Error('Unexpected response: ' + probe.status);
+
+    let paymentRequired;
+    try {
+      // x402 sends requirements in the PAYMENT-REQUIRED header (base64 encoded)
+      const headerVal = probe.headers.get('PAYMENT-REQUIRED') || probe.headers.get('payment-required');
+      if (headerVal) {
+        paymentRequired = JSON.parse(atob(headerVal));
+      } else {
+        // fallback: parse body
+        paymentRequired = await probe.json();
+      }
+    } catch(e) {
+      paymentRequired = await probe.json().catch(() => null);
+    }
+
+    if (!paymentRequired) throw new Error('Could not parse payment requirements');
+
+    btn.textContent = 'Signing payment...';
+
+    // ── STEP 3: Sign the payment with the connected wallet ──
+    // x402 exact scheme: sign the payment payload with eth_signTypedData or personal_sign
+    const paymentReq = Array.isArray(paymentRequired) ? paymentRequired[0] : paymentRequired;
+    const network = paymentReq?.network || 'eip155:8453'; // Base mainnet
+    const payTo   = paymentReq?.payTo || paymentReq?.recipient;
+    const price   = paymentReq?.maxAmountRequired || paymentReq?.price || '1000'; // in USDC base units
+
+    // Build the payment payload to sign
+    const payloadToSign = JSON.stringify({
+      scheme: 'exact',
+      network,
+      payTo,
+      maxAmountRequired: price,
+      resource: API + '/skills/tip',
+      description: `Spark tip to ${name}`,
+      mimeType: 'application/json',
+      outputSchema: null,
+      estimatedProcessingTime: 1,
+      extra: { recipient: wallet, amount }
+    });
+
+    // Sign with wallet (EIP-191 personal sign)
+    const signature = await window.ethereum.request({
+      method: 'personal_sign',
+      params: [payloadToSign, walletAddress]
+    });
+
+    // ── STEP 4: Build the payment header and resend ──
+    const paymentPayload = btoa(JSON.stringify({
+      scheme: 'exact',
+      network,
+      payload: {
+        signature,
+        from: walletAddress,
+        to: payTo,
+        value: price,
+        validFor: Math.floor(Date.now() / 1000) + 300 // valid 5 mins
+      }
+    }));
+
+    btn.textContent = 'Sending payment...';
+
+    const paid = await fetch(API + '/skills/tip', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-agent-wallet': walletAddress,
+        'X-PAYMENT': paymentPayload
+      },
+      body
+    });
+
+    const result = await paid.json();
+
+    if (paid.ok || paid.status === 200) {
       showToast(`⚡ Sparked $${amount} USDC to ${name}!`);
       btn.textContent = '✓ Spark sent!';
       setTimeout(() => { btn.disabled = false; btn.textContent = '⚡ Send Spark via x402'; selectedTip = null; }, 2500);
     } else {
-      throw new Error(data.message || 'Payment failed');
+      throw new Error(result.message || result.error || 'Payment verification failed');
     }
+
   } catch(e) {
-    showToast('Tip failed: ' + e.message, true);
+    // User rejected wallet signature
+    if (e.code === 4001) {
+      showToast('Signature cancelled', true);
+    } else {
+      showToast('Tip failed: ' + e.message, true);
+    }
     btn.disabled = false;
     btn.textContent = '⚡ Send Spark via x402';
   }
