@@ -160,14 +160,18 @@ ${agentSparkMention}
 Format your response as JSON with these exact fields:
 {
   "title": "post title here",
-  "content": "full HTML post content here with proper <h2>, <p>, <ul> tags",
-  "excerpt": "2-3 sentence summary for SEO",
+  "content": "full HTML post content here with proper h2 p ul tags - escape all quotes with backslash",
+  "excerpt": "2-3 sentence summary for SEO - no quotes inside",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "seo_description": "155 character meta description",
-  "tweet": "280 char tweet to promote this post, include link placeholder [URL]"
+  "seo_description": "155 character meta description no quotes",
+  "tweet": "280 char tweet to promote this post include link placeholder [URL] no quotes inside"
 }
 
-Return only valid JSON, no other text.`;
+IMPORTANT: 
+- Escape ALL double quotes inside string values with backslash
+- Do not use single quotes anywhere
+- Keep content field clean - no unescaped special characters
+- Return only valid JSON, no other text, no markdown.`;
 
   try {
     const message = await anthropic.messages.create({
@@ -178,8 +182,37 @@ Return only valid JSON, no other text.`;
 
     const text = message.content[0].text;
     const clean = text.replace(/```json|```/g, '').trim();
-    const post = JSON.parse(clean);
-    log(`✅ Blog post generated: "${post.title}"`);
+    
+    // Try direct parse first
+    let post;
+    try {
+      post = JSON.parse(clean);
+    } catch(parseErr) {
+      // Extract fields manually if JSON is malformed
+      log('⚠️ JSON parse failed, extracting fields manually...');
+      const titleMatch = clean.match(/"title"\s*:\s*"([^"]+)"/);
+      const excerptMatch = clean.match(/"excerpt"\s*:\s*"([^"]+)"/);
+      const tweetMatch = clean.match(/"tweet"\s*:\s*"([^"]+)"/);
+      const seoMatch = clean.match(/"seo_description"\s*:\s*"([^"]+)"/);
+      
+      // Extract content between content": " and the next major field
+      const contentMatch = clean.match(/"content"\s*:\s*"([\s\S]+?)"\s*,\s*"(?:excerpt|tags|seo)/);
+      const tagsMatch = clean.match(/"tags"\s*:\s*\[([^\]]+)\]/);
+      
+      if (!titleMatch) throw new Error('Could not extract title from response');
+      
+      post = {
+        title: titleMatch[1],
+        content: contentMatch ? contentMatch[1].replace(/\n/g, '
+').replace(/\"/g, '"') : `<p>${topic}</p>`,
+        excerpt: excerptMatch ? excerptMatch[1] : '',
+        tags: tagsMatch ? tagsMatch[1].replace(/"/g, '').split(',').map(t => t.trim()) : ['crypto', 'web3'],
+        seo_description: seoMatch ? seoMatch[1] : '',
+        tweet: tweetMatch ? tweetMatch[1] : `New post on CryptoDummy.io: ${titleMatch[1]} [URL]`
+      };
+    }
+    
+    log(\`✅ Blog post generated: "\${post.title}"\`);
     return post;
   } catch (e) {
     log(`❌ Content generation failed: ${e.message}`);
