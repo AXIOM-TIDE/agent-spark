@@ -8,13 +8,14 @@
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
- "dependencies": {
+  "dependencies": {
     "@x402/core": "latest",
     "@x402/evm": "latest",
     "@x402/express": "latest",
     "dotenv": "latest",
     "express": "^4.18.0",
     "@coinbase/x402": "latest",
-    "twitter-api-v2": "^1.17.0"
+    "twitter-api-v2": "^1.17.0",
+    "@anthropic-ai/sdk": "^0.39.0"
   }
 }
