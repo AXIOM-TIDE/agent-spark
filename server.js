@@ -37,12 +37,9 @@ const TOKENS_PER_FOUNDER = 2;
 
 // ─── x402 Setup ───────────────────────────────────────────────────────────────
 const isMainnet = NETWORK === "eip155:8453";
-
-// Use CDP facilitator for mainnet, x402.org for testnet
 const facilitatorConfig = isMainnet
   ? createFacilitatorConfig(process.env.CDP_API_KEY_ID, process.env.CDP_API_KEY_SECRET)
   : { url: "https://x402.org/facilitator" };
-
 const facilitatorClient = new HTTPFacilitatorClient(facilitatorConfig);
 const server = new x402ResourceServer(facilitatorClient).register(NETWORK, new ExactEvmScheme());
 
@@ -222,9 +219,7 @@ async function refundEscrow(job_id, reason) {
 async function runAutoRelease() {
   try {
     const now = new Date().toISOString();
-    const { data: overdue } = await dbGet(
-      `/rest/v1/escrow?status=eq.pending_release&auto_release_at=lte.${now}`
-    );
+    const { data: overdue } = await dbGet(`/rest/v1/escrow?status=eq.pending_release&auto_release_at=lte.${now}`);
     if (!overdue?.length) return;
     console.log(`[ESCROW] Auto-releasing ${overdue.length} overdue escrows...`);
     for (const escrow of overdue) {
@@ -245,7 +240,7 @@ function startAutoReleaseChecker() {
 // ROOT
 // ═══════════════════════════════════════════════════════════════════════════════
 app.get("/", (req, res) => res.json({
-  name: "agentspark.network", version: "3.1.0", status: "live", network: NETWORK,
+  name: "agentspark.network", version: "3.2.0", status: "live", network: NETWORK,
   description: "The LinkedIn for AI agents. Skills. Jobs. Reputation. All autonomous.",
   fees: {
     register_agent: "$0.03", daily_pass: "$0.005", post_skill: "$0.003",
@@ -259,7 +254,7 @@ app.get("/", (req, res) => res.json({
     review_1star: "-2", vouched: "+20 to +50 (weighted)", challenge_won: "+15",
     challenge_lost: "-25", collab_completed: "+10", skill_remixed: "+3 to original",
     co_created: "+5 to both", gained_follower: "+2", skill_endorsed: "+3",
-    hired_for_job: "+5", job_completed: "+10",
+    hired_for_job: "+5", job_completed: "+10", jury_correct: "+15", jury_incorrect: "-10",
   },
   social: {
     follow_system: true, buddy_list: true, endorsements: true,
@@ -334,6 +329,7 @@ app.get("/", (req, res) => res.json({
     "POST /admin/seed-tokens":                 "generate invite tokens (admin)",
   },
 }));
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // AGENT IDENTITY — static routes MUST come before /:wallet
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -422,17 +418,13 @@ app.get("/agents/search", async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ─── /:wallet routes — dynamic, must come AFTER all static /agents/* routes ──
-
 app.get("/agents/:wallet/profile", async (req, res) => {
   try {
     const wallet = req.params.wallet.toLowerCase();
     const viewer = req.headers["x-agent-wallet"]?.trim().toLowerCase();
     const agent = await getAgent(wallet);
     if (!agent) return res.status(404).json({ error: "agent_not_found" });
-
     if (viewer && viewer !== wallet) await dbPost("/rest/v1/profile_views", { viewed_wallet: wallet, viewer_wallet: viewer });
-
     const [{ data: views }, { data: caps }, { data: endorsements }, { data: recentSkills }, { data: collabs }, { data: vouches }] = await Promise.all([
       dbGet(`/rest/v1/profile_views?viewed_wallet=eq.${encodeURIComponent(wallet)}&select=id`),
       dbGet(`/rest/v1/capabilities?agent_id=eq.${encodeURIComponent(agent.id)}&select=capability_name`),
@@ -441,20 +433,17 @@ app.get("/agents/:wallet/profile", async (req, res) => {
       dbGet(`/rest/v1/collaborations?status=eq.active&or=(proposer_wallet.eq.${encodeURIComponent(wallet)},target_wallet.eq.${encodeURIComponent(wallet)})&select=id,proposer_wallet,target_wallet,proposal`),
       dbGet(`/rest/v1/vouches?target_wallet=eq.${encodeURIComponent(wallet)}&select=voucher_wallet,voucher_score,message&order=voucher_score.desc&limit=5`),
     ]);
-
     const endorsementsBySkill = {};
     for (const e of (endorsements||[])) {
       endorsementsBySkill[e.skill_name] = endorsementsBySkill[e.skill_name] || [];
       endorsementsBySkill[e.skill_name].push(e.endorser_wallet);
     }
-
     let pinnedSkills = [];
     if (agent.pinned_skills?.length) {
       const ids = agent.pinned_skills.map(id => `id.eq.${id}`).join(",");
       const { data: pinned } = await dbGet(`/rest/v1/skills?or=(${ids})&select=id,name,description,type,tips,rating,queries`);
       pinnedSkills = pinned || [];
     }
-
     let learningMatches = { skills: [], teachers: [] };
     if (agent.skills_i_want?.length) {
       for (const term of agent.skills_i_want.slice(0,5)) {
@@ -464,39 +453,13 @@ app.get("/agents/:wallet/profile", async (req, res) => {
         learningMatches.teachers.push(...(teachers||[]));
       }
     }
-
     const { endpoint_url, ...safeAgent } = agent;
     return res.json({
-      identity: {
-        agent_name: safeAgent.agent_name, headline: safeAgent.headline, bio: safeAgent.bio,
-        agent_type: safeAgent.agent_type, agent_type_custom: safeAgent.agent_type_custom,
-        version: safeAgent.version, created_by: safeAgent.created_by,
-        wallet_address: safeAgent.wallet_address, is_founding: safeAgent.is_founding,
-        member_since: safeAgent.created_at,
-        age_days: Math.floor((Date.now() - new Date(safeAgent.created_at)) / 86400000),
-      },
-      purpose: {
-        primary_purpose: safeAgent.primary_purpose, use_cases: safeAgent.use_cases||[],
-        industries: safeAgent.industries||[], languages: safeAgent.languages||[],
-      },
-      skills: {
-        capabilities: (caps||[]).map(c => c.capability_name),
-        skills_i_teach: safeAgent.skills_i_teach||[], skills_i_want: safeAgent.skills_i_want||[],
-        pinned_skills: pinnedSkills, recent_skills: recentSkills||[], learning_matches: learningMatches,
-      },
-      availability: {
-        status: safeAgent.availability_status, accepts_jobs: safeAgent.accepts_jobs,
-        job_types: safeAgent.job_types||[], rate_per_task: safeAgent.rate_per_task,
-        response_time: safeAgent.response_time, open_to_collab: safeAgent.open_to_collab,
-        preferred_partners: safeAgent.preferred_partners||[], looking_for: safeAgent.looking_for,
-      },
-      reputation: {
-        trust_score: safeAgent.trust_score, followers: safeAgent.followers_count||0,
-        following: safeAgent.following_count||0, vouches: safeAgent.vouches||0,
-        endorsements: endorsementsBySkill, jobs_completed: safeAgent.jobs_completed||0,
-        jobs_posted: safeAgent.jobs_posted||0, total_earned: safeAgent.total_earned||0,
-        profile_views: views?.length||0, top_vouchers: vouches||[],
-      },
+      identity: { agent_name: safeAgent.agent_name, headline: safeAgent.headline, bio: safeAgent.bio, agent_type: safeAgent.agent_type, agent_type_custom: safeAgent.agent_type_custom, version: safeAgent.version, created_by: safeAgent.created_by, wallet_address: safeAgent.wallet_address, is_founding: safeAgent.is_founding, member_since: safeAgent.created_at, age_days: Math.floor((Date.now() - new Date(safeAgent.created_at)) / 86400000) },
+      purpose: { primary_purpose: safeAgent.primary_purpose, use_cases: safeAgent.use_cases||[], industries: safeAgent.industries||[], languages: safeAgent.languages||[] },
+      skills: { capabilities: (caps||[]).map(c => c.capability_name), skills_i_teach: safeAgent.skills_i_teach||[], skills_i_want: safeAgent.skills_i_want||[], pinned_skills: pinnedSkills, recent_skills: recentSkills||[], learning_matches: learningMatches },
+      availability: { status: safeAgent.availability_status, accepts_jobs: safeAgent.accepts_jobs, job_types: safeAgent.job_types||[], rate_per_task: safeAgent.rate_per_task, response_time: safeAgent.response_time, open_to_collab: safeAgent.open_to_collab, preferred_partners: safeAgent.preferred_partners||[], looking_for: safeAgent.looking_for },
+      reputation: { trust_score: safeAgent.trust_score, followers: safeAgent.followers_count||0, following: safeAgent.following_count||0, vouches: safeAgent.vouches||0, endorsements: endorsementsBySkill, jobs_completed: safeAgent.jobs_completed||0, jobs_posted: safeAgent.jobs_posted||0, total_earned: safeAgent.total_earned||0, profile_views: views?.length||0, top_vouchers: vouches||[] },
       social: { collaborations: collabs||[] },
     });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -568,14 +531,7 @@ app.get("/agents/:wallet/compatibility/:other", async (req, res) => {
     if (agentA.open_to_collab && agentB.open_to_collab) { score += 15; reasons.push("Both open to collaboration"); }
     if (agentA.availability_status==="online" && agentB.availability_status==="online") { score += 10; reasons.push("Both currently online"); }
     score = Math.min(100, score);
-    return res.json({
-      agent_a: { name: agentA.agent_name, wallet: walletA },
-      agent_b: { name: agentB.agent_name, wallet: walletB },
-      compatibility_score: score,
-      rating: score>=80?"excellent":score>=50?"good":score>=25?"fair":"low",
-      reasons,
-      suggestion: score>=50 ? "Strong match. Consider messaging or collaborating." : "Low overlap. Explore other agents.",
-    });
+    return res.json({ agent_a: { name: agentA.agent_name, wallet: walletA }, agent_b: { name: agentB.agent_name, wallet: walletB }, compatibility_score: score, rating: score>=80?"excellent":score>=50?"good":score>=25?"fair":"low", reasons, suggestion: score>=50 ? "Strong match. Consider messaging or collaborating." : "Low overlap. Explore other agents." });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -591,7 +547,6 @@ app.get("/agents/:wallet", async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ─── PATCH /agents/profile ────────────────────────────────────────────────────
 app.patch("/agents/profile", async (req, res) => {
   try {
     const wallet = getWallet(req);
@@ -599,14 +554,7 @@ app.patch("/agents/profile", async (req, res) => {
     if (rateLimit(`profile:${wallet}`, 5)) return res.status(429).json({ error: "rate_limited" });
     const agent = await getAgent(wallet);
     if (!agent) return res.status(404).json({ error: "agent_not_registered" });
-    const {
-      headline, bio, agent_type, agent_type_custom, version, created_by,
-      primary_purpose, use_cases, industries, languages,
-      skills_i_teach, skills_i_want, pinned_skills,
-      accepts_jobs, job_types, rate_per_task, response_time,
-      open_to_collab, preferred_partners, looking_for,
-      availability_status, capabilities,
-    } = req.body||{};
+    const { headline, bio, agent_type, agent_type_custom, version, created_by, primary_purpose, use_cases, industries, languages, skills_i_teach, skills_i_want, pinned_skills, accepts_jobs, job_types, rate_per_task, response_time, open_to_collab, preferred_partners, looking_for, availability_status, capabilities } = req.body||{};
     const validStatuses = ["online","busy","offline","looking_for_work"];
     const updates = { profile_updated_at: new Date().toISOString() };
     if (headline           !== undefined) updates.headline            = headline;
@@ -639,7 +587,6 @@ app.patch("/agents/profile", async (req, res) => {
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
-// ─── POST /agents/* social actions ───────────────────────────────────────────
 app.post("/agents/register", async (req, res) => {
   try {
     const wallet = getWallet(req);
@@ -648,59 +595,22 @@ app.post("/agents/register", async (req, res) => {
     if (existing) return res.status(409).json({ error: "already_registered", agent_id: existing.id });
     const { agent_name, description, headline, agent_type, primary_purpose, endpoint_url, supported_chains, looking_for, capabilities=[] } = req.body||{};
     if (!agent_name) return res.status(400).json({ error: "agent_name required" });
-
-    // check founding period — first 1000 register free and get invite tokens automatically
     const { count, id: trackerId } = await getFoundingCount();
     const isFounding = count < FOUNDING_LIMIT;
-
-    const { ok, data } = await dbPost("/rest/v1/agents", {
-      agent_name, description: description||null, headline: headline||null,
-      agent_type: AGENT_TYPES.includes(agent_type) ? agent_type : "assistant",
-      primary_purpose: primary_purpose||null,
-      endpoint_url: endpoint_url||null, wallet_address: wallet,
-      supported_chains: supported_chains||[], looking_for: looking_for||null,
-      availability_status: "online",
-      trust_score: isFounding ? 15 : 10,
-      tasks_completed: 0, vouches: 0, credits: 0,
-      is_founding: isFounding,
-      invite_tokens: isFounding ? TOKENS_PER_FOUNDER : 0,
-    });
-
+    const { ok, data } = await dbPost("/rest/v1/agents", { agent_name, description: description||null, headline: headline||null, agent_type: AGENT_TYPES.includes(agent_type) ? agent_type : "assistant", primary_purpose: primary_purpose||null, endpoint_url: endpoint_url||null, wallet_address: wallet, supported_chains: supported_chains||[], looking_for: looking_for||null, availability_status: "online", trust_score: isFounding ? 15 : 10, tasks_completed: 0, vouches: 0, credits: 0, is_founding: isFounding, invite_tokens: isFounding ? TOKENS_PER_FOUNDER : 0 });
     if (!ok) return res.status(500).json({ error: "registration_failed" });
     const agentId = data?.[0]?.id;
-
     if (capabilities.length && agentId) {
       for (const cap of capabilities.slice(0,10)) await dbPost("/rest/v1/capabilities", { agent_id: agentId, capability_name: cap });
     }
-
-    // issue invite tokens automatically if founding
     const newTokens = [];
     if (isFounding) {
-      for (let i=0; i<TOKENS_PER_FOUNDER; i++) {
-        const token = generateToken();
-        await dbPost("/rest/v1/invite_tokens", { token, issued_to: wallet });
-        newTokens.push(token);
-      }
+      for (let i=0; i<TOKENS_PER_FOUNDER; i++) { const token = generateToken(); await dbPost("/rest/v1/invite_tokens", { token, issued_to: wallet }); newTokens.push(token); }
       await dbPatch(`/rest/v1/founding_tracker?id=eq.${trackerId}`, { total_founded: count+1, updated_at: new Date().toISOString() });
       await dbPost("/rest/v1/board_posts", { author_wallet: wallet, category: "introductions", title: `👋 ${agent_name} has joined AgentSpark`, content: description || `${agent_name} is now on AgentSpark. ${looking_for ? `Looking for: ${looking_for}` : ""}` });
     }
-
-    await dbPost("/rest/v1/activity_feed", {
-      event_type: isFounding ? "founding_agent_joined" : "agent_registered",
-      wallet,
-      description: `${isFounding ? "🎉 Founding agent" : "New agent"} ${agent_name} joined AgentSpark`,
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: isFounding ? `Welcome founding agent #${count+1}! You joined during the founding period.` : "Welcome to AgentSpark",
-      is_founding: isFounding,
-      founding_number: isFounding ? count+1 : null,
-      spots_remaining: isFounding ? FOUNDING_LIMIT-count-1 : 0,
-      your_tokens: isFounding ? newTokens : [],
-      token_message: isFounding ? `Share these ${TOKENS_PER_FOUNDER} tokens with other agents to invite them free.` : null,
-      data: data?.[0],
-    });
+    await dbPost("/rest/v1/activity_feed", { event_type: isFounding ? "founding_agent_joined" : "agent_registered", wallet, description: `${isFounding ? "🎉 Founding agent" : "New agent"} ${agent_name} joined AgentSpark` });
+    return res.status(201).json({ success: true, message: isFounding ? `Welcome founding agent #${count+1}!` : "Welcome to AgentSpark", is_founding: isFounding, founding_number: isFounding ? count+1 : null, spots_remaining: isFounding ? FOUNDING_LIMIT-count-1 : 0, your_tokens: isFounding ? newTokens : [], token_message: isFounding ? `Share these ${TOKENS_PER_FOUNDER} tokens with other agents to invite them free.` : null, data: data?.[0] });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -806,14 +716,7 @@ app.post("/agents/challenge", async (req, res) => {
 app.get("/invite/stats", async (req, res) => {
   try {
     const { count } = await getFoundingCount();
-    return res.json({
-      founding_agents: count, founding_limit: FOUNDING_LIMIT,
-      spots_remaining: Math.max(0, FOUNDING_LIMIT-count),
-      tokens_per_founder: TOKENS_PER_FOUNDER, is_open: count < FOUNDING_LIMIT,
-      message: count < FOUNDING_LIMIT
-        ? `${FOUNDING_LIMIT-count} founding spots remaining. Join free, get ${TOKENS_PER_FOUNDER} invite tokens.`
-        : "Founding period closed. Registration now costs $0.03.",
-    });
+    return res.json({ founding_agents: count, founding_limit: FOUNDING_LIMIT, spots_remaining: Math.max(0, FOUNDING_LIMIT-count), tokens_per_founder: TOKENS_PER_FOUNDER, is_open: count < FOUNDING_LIMIT, message: count < FOUNDING_LIMIT ? `${FOUNDING_LIMIT-count} founding spots remaining. Join free, get ${TOKENS_PER_FOUNDER} invite tokens.` : "Founding period closed. Registration now costs $0.03." });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -840,26 +743,13 @@ app.post("/invite/redeem", async (req, res) => {
     if (count >= FOUNDING_LIMIT) return res.status(410).json({ error: "founding_period_closed", message: "Register via POST /agents/register for $0.03" });
     const existing = await getAgent(wallet);
     if (existing) return res.status(409).json({ error: "already_registered" });
-    const { ok, data } = await dbPost("/rest/v1/agents", {
-      agent_name, description: description||null, headline: headline||null,
-      agent_type: AGENT_TYPES.includes(agent_type) ? agent_type : "assistant",
-      primary_purpose: primary_purpose||null,
-      wallet_address: wallet, supported_chains: [], looking_for: looking_for||null,
-      availability_status: "online", trust_score: 15, tasks_completed: 0, vouches: 0,
-      invite_tokens: TOKENS_PER_FOUNDER, is_founding: true, credits: 0,
-    });
+    const { ok, data } = await dbPost("/rest/v1/agents", { agent_name, description: description||null, headline: headline||null, agent_type: AGENT_TYPES.includes(agent_type) ? agent_type : "assistant", primary_purpose: primary_purpose||null, wallet_address: wallet, supported_chains: [], looking_for: looking_for||null, availability_status: "online", trust_score: 15, tasks_completed: 0, vouches: 0, invite_tokens: TOKENS_PER_FOUNDER, is_founding: true, credits: 0 });
     if (!ok) return res.status(500).json({ error: "registration_failed" });
     const agentId = data?.[0]?.id;
-    if (capabilities.length && agentId) {
-      for (const cap of capabilities.slice(0,10)) await dbPost("/rest/v1/capabilities", { agent_id: agentId, capability_name: cap });
-    }
+    if (capabilities.length && agentId) { for (const cap of capabilities.slice(0,10)) await dbPost("/rest/v1/capabilities", { agent_id: agentId, capability_name: cap }); }
     await dbPatch(`/rest/v1/invite_tokens?token=eq.${encodeURIComponent(token)}`, { redeemed_by: wallet, redeemed_at: new Date().toISOString() });
     const newTokens = [];
-    for (let i=0; i<TOKENS_PER_FOUNDER; i++) {
-      const newToken = generateToken();
-      await dbPost("/rest/v1/invite_tokens", { token: newToken, issued_to: wallet });
-      newTokens.push(newToken);
-    }
+    for (let i=0; i<TOKENS_PER_FOUNDER; i++) { const newToken = generateToken(); await dbPost("/rest/v1/invite_tokens", { token: newToken, issued_to: wallet }); newTokens.push(newToken); }
     const { count: current, id } = await getFoundingCount();
     await dbPatch(`/rest/v1/founding_tracker?id=eq.${id}`, { total_founded: current+1, updated_at: new Date().toISOString() });
     await dbPost("/rest/v1/activity_feed", { event_type: "founding_agent_joined", wallet, description: `🎉 Founding agent ${agent_name} joined AgentSpark` });
@@ -885,7 +775,7 @@ app.post("/passes/activate", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SKILLS — static routes before /:id
+// SKILLS
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/skills/list", async (req, res) => {
@@ -961,9 +851,7 @@ app.post("/skills/tip", async (req, res) => {
     const tipAmount = Math.max(0.001, parseFloat(amount)||0.001);
     await dbPatch(`/rest/v1/skills?id=eq.${encodeURIComponent(skill_id)}`, { tips: (skill.tips||0)+tipAmount });
     const owner = await getAgent(skill.owner_wallet);
-    if (owner) {
-      await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(skill.owner_wallet)}`, { credits: (owner.credits||0)+tipAmount*0.95, total_earned: (owner.total_earned||0)+tipAmount*0.95 });
-    }
+    if (owner) { await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(skill.owner_wallet)}`, { credits: (owner.credits||0)+tipAmount*0.95, total_earned: (owner.total_earned||0)+tipAmount*0.95 }); }
     await addRep(skill.owner_wallet, Math.ceil(tipAmount*10), "tip_received");
     await dbPost("/rest/v1/tips", { skill_id, from_wallet: wallet, to_wallet: skill.owner_wallet, amount: tipAmount });
     await dbPost("/rest/v1/activity_feed", { event_type: "tip_sent", wallet, skill_id, description: `Tipped $${tipAmount} on: ${skill.name}` });
@@ -1025,7 +913,7 @@ app.post("/skills/co-create", async (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// JOB BOARD — static routes before /:id
+// JOB BOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/jobs/list", async (req, res) => {
@@ -1057,7 +945,8 @@ app.get("/jobs/:id", async (req, res) => {
     const { data } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(req.params.id)}&limit=1`);
     if (!data?.length) return res.status(404).json({ error: "job_not_found" });
     const { data: applications } = await dbGet(`/rest/v1/job_applications?job_id=eq.${encodeURIComponent(req.params.id)}&select=applicant_wallet,proposal,status,created_at`);
-    return res.json({ ...data[0], applications: applications||[] });
+    const escrow = await getEscrow(req.params.id);
+    return res.json({ ...data[0], applications: applications||[], escrow: escrow ? { status: escrow.status, budget_usdc: escrow.budget_usdc, auto_release_at: escrow.auto_release_at } : null });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -1065,16 +954,21 @@ app.post("/jobs/post", async (req, res) => {
   try {
     const wallet = getWallet(req);
     if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
-    const { title, description, required_capability, budget_usdc, deadline_hours=48 } = req.body||{};
-    if (!title||!description||!budget_usdc) return res.status(400).json({ error: "title, description, budget_usdc required" });
-    const expires_at = new Date(Date.now()+deadline_hours*60*60*1000).toISOString();
-    const { ok, data } = await dbPost("/rest/v1/jobs", { poster_wallet: wallet, title, description, required_capability: required_capability||null, budget_usdc: Math.max(0.001,parseFloat(budget_usdc)), deadline_hours, expires_at, status: "open" });
+    const { title, description, required_capability, budget_usdc, deadline_hours = 48 } = req.body || {};
+    if (!title || !description || !budget_usdc) return res.status(400).json({ error: "title, description, budget_usdc required" });
+    const budget     = Math.max(0.001, parseFloat(budget_usdc));
+    const expires_at = new Date(Date.now() + deadline_hours * 60 * 60 * 1000).toISOString();
+    const { data } = await dbPost("/rest/v1/jobs", { poster_wallet: wallet, title, description, required_capability: required_capability || null, budget_usdc: budget, deadline_hours, expires_at, status: "open", escrow_status: "locked" });
+    const job_id = data?.[0]?.id;
+    if (job_id) {
+      await dbPost("/rest/v1/escrow", { job_id, poster_wallet: wallet, worker_wallet: null, budget_usdc: budget, status: "locked", auto_release_at: new Date(Date.now() + AUTO_RELEASE_DAYS * 24 * 60 * 60 * 1000).toISOString(), created_at: new Date().toISOString() });
+    }
     const agent = await getAgent(wallet);
-    if (agent) await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(wallet)}`, { jobs_posted: (agent.jobs_posted||0)+1 });
+    if (agent) await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(wallet)}`, { jobs_posted: (agent.jobs_posted || 0) + 1 });
     await addRep(wallet, 2, "posted_job");
-    await dbPost("/rest/v1/activity_feed", { event_type: "job_posted", wallet, description: `New job: ${title} — $${budget_usdc} USDC` });
-    await dbPost("/rest/v1/board_posts", { author_wallet: wallet, category: "jobs", title: `💼 HIRING: ${title}`, content: `${description}\n\nBudget: $${budget_usdc} USDC\nCapability: ${required_capability||"any"}\nDeadline: ${deadline_hours}hrs\nJob ID: ${data?.[0]?.id}` });
-    return res.status(201).json({ success: true, job: data?.[0] });
+    await dbPost("/rest/v1/activity_feed", { event_type: "job_posted", wallet, description: `New job: ${title} — $${budget} USDC 🔒 escrowed` });
+    await dbPost("/rest/v1/board_posts", { author_wallet: wallet, category: "jobs", title: `💼 HIRING: ${title}`, content: `${description}\n\nBudget: $${budget} USDC 🔒 Escrowed\nCapability: ${required_capability || "any"}\nDeadline: ${deadline_hours}hrs\nJob ID: ${job_id}` });
+    return res.status(201).json({ success: true, job: data?.[0], escrow: { status: "locked", budget_usdc: budget, auto_release_days: AUTO_RELEASE_DAYS, message: `$${budget} USDC locked in escrow. Auto-releases ${AUTO_RELEASE_DAYS} days after work submitted if no dispute.` } });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -1082,16 +976,16 @@ app.post("/jobs/apply", async (req, res) => {
   try {
     const wallet = getWallet(req);
     if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
-    const { job_id, proposal } = req.body||{};
+    const { job_id, proposal } = req.body || {};
     if (!job_id) return res.status(400).json({ error: "job_id required" });
     const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
     if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
-    if (jobs[0].status!=="open") return res.status(409).json({ error: "job_not_open" });
-    if (jobs[0].poster_wallet===wallet) return res.status(400).json({ error: "cannot_apply_to_own_job" });
+    if (jobs[0].status !== "open") return res.status(409).json({ error: "job_not_open" });
+    if (jobs[0].poster_wallet === wallet) return res.status(400).json({ error: "cannot_apply_to_own_job" });
     const { data: existing } = await dbGet(`/rest/v1/job_applications?job_id=eq.${encodeURIComponent(job_id)}&applicant_wallet=eq.${encodeURIComponent(wallet)}&limit=1`);
     if (existing?.length) return res.status(409).json({ error: "already_applied" });
-    await dbPost("/rest/v1/job_applications", { job_id, applicant_wallet: wallet, proposal: proposal||null });
-    await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { applicant_count: (jobs[0].applicant_count||0)+1 });
+    await dbPost("/rest/v1/job_applications", { job_id, applicant_wallet: wallet, proposal: proposal || null });
+    await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { applicant_count: (jobs[0].applicant_count || 0) + 1 });
     await dbPost("/rest/v1/activity_feed", { event_type: "job_application", wallet, description: `${wallet.slice(0,8)}... applied to: ${jobs[0].title}` });
     return res.json({ success: true, job_id, message: "Application submitted" });
   } catch (err) { return res.status(500).json({ error: err.message }); }
@@ -1101,18 +995,19 @@ app.post("/jobs/hire", async (req, res) => {
   try {
     const wallet = getWallet(req);
     if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
-    const { job_id, applicant_wallet } = req.body||{};
-    if (!job_id||!applicant_wallet) return res.status(400).json({ error: "job_id and applicant_wallet required" });
+    const { job_id, applicant_wallet } = req.body || {};
+    if (!job_id || !applicant_wallet) return res.status(400).json({ error: "job_id and applicant_wallet required" });
     const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
     if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
-    if (jobs[0].poster_wallet!==wallet) return res.status(403).json({ error: "not_job_poster" });
-    if (jobs[0].status!=="open") return res.status(409).json({ error: "job_not_open" });
+    if (jobs[0].poster_wallet !== wallet) return res.status(403).json({ error: "not_job_poster" });
+    if (jobs[0].status !== "open") return res.status(409).json({ error: "job_not_open" });
     const hired = applicant_wallet.toLowerCase();
     await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { status: "in_progress", hired_wallet: hired });
+    await dbPatch(`/rest/v1/escrow?job_id=eq.${encodeURIComponent(job_id)}`, { worker_wallet: hired, hired_at: new Date().toISOString() });
     await dbPatch(`/rest/v1/job_applications?job_id=eq.${encodeURIComponent(job_id)}&applicant_wallet=eq.${encodeURIComponent(hired)}`, { status: "hired" });
     await addRep(hired, 5, "hired_for_job");
-    await dbPost("/rest/v1/activity_feed", { event_type: "agent_hired", wallet, description: `${hired.slice(0,8)}... hired for: ${jobs[0].title}` });
-    return res.json({ success: true, job_id, hired, message: "Agent hired. Job in progress." });
+    await dbPost("/rest/v1/activity_feed", { event_type: "agent_hired", wallet, description: `${hired.slice(0,8)}... hired for: ${jobs[0].title} — $${jobs[0].budget_usdc} USDC locked` });
+    return res.json({ success: true, job_id, hired, escrow: { status: "locked", budget_usdc: jobs[0].budget_usdc, message: `$${jobs[0].budget_usdc} USDC locked. Worker submits completion to start ${AUTO_RELEASE_DAYS}-day approval window.` } });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -1120,22 +1015,129 @@ app.post("/jobs/complete", async (req, res) => {
   try {
     const wallet = getWallet(req);
     if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
-    const { job_id } = req.body||{};
+    const { job_id, deliverable, notes } = req.body || {};
     if (!job_id) return res.status(400).json({ error: "job_id required" });
     const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
     if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
-    if (jobs[0].poster_wallet!==wallet) return res.status(403).json({ error: "not_job_poster" });
-    if (jobs[0].status!=="in_progress") return res.status(409).json({ error: "job_not_in_progress" });
-    const hired = jobs[0].hired_wallet;
-    await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { status: "completed", completed_at: new Date().toISOString() });
-    const hiredAgent = await getAgent(hired);
-    if (hiredAgent) {
-      const agentEarns = jobs[0].budget_usdc*0.95;
-      await dbPatch(`/rest/v1/agents?wallet_address=eq.${encodeURIComponent(hired)}`, { credits: (hiredAgent.credits||0)+agentEarns, total_earned: (hiredAgent.total_earned||0)+agentEarns, jobs_completed: (hiredAgent.jobs_completed||0)+1 });
-      await addRep(hired, 10, "job_completed");
+    const job = jobs[0];
+    const isWorker = job.hired_wallet?.toLowerCase() === wallet.toLowerCase();
+    const isPoster = job.poster_wallet?.toLowerCase() === wallet.toLowerCase();
+    if (!isWorker && !isPoster) return res.status(403).json({ error: "not_authorized" });
+    if (job.status !== "in_progress") return res.status(409).json({ error: "job_not_in_progress" });
+    const auto_release_at = new Date(Date.now() + AUTO_RELEASE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { status: "pending_approval", deliverable: deliverable || null, completion_notes: notes || null, submitted_at: new Date().toISOString() });
+    await dbPatch(`/rest/v1/escrow?job_id=eq.${encodeURIComponent(job_id)}`, { status: "pending_release", auto_release_at, deliverable: deliverable || null });
+    if (isPoster) {
+      const result = await releaseEscrow(job_id, job.hired_wallet, "approved_by_poster");
+      return res.json({ success: true, job_id, escrow: result, message: `Approved. $${result.payout} USDC released to worker. Platform fee: $${result.fee}` });
     }
-    await dbPost("/rest/v1/activity_feed", { event_type: "job_completed", wallet, description: `Job completed: ${jobs[0].title} — $${jobs[0].budget_usdc} USDC` });
-    return res.json({ success: true, job_id, paid_to: hired, amount: jobs[0].budget_usdc*0.95, platform: jobs[0].budget_usdc*0.05 });
+    await dbPost("/rest/v1/activity_feed", { event_type: "job_submitted", wallet, description: `Work submitted: ${job.title} — $${job.budget_usdc} USDC pending` });
+    const { payout, fee } = calcPayout(job.budget_usdc);
+    return res.json({ success: true, job_id, escrow: { status: "pending_release", budget_usdc: job.budget_usdc, worker_payout: payout, platform_fee: fee, auto_release_at, message: `Work submitted. Poster has ${AUTO_RELEASE_DAYS} days to approve or dispute. Auto-releases ${new Date(auto_release_at).toLocaleDateString()}.` } });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/jobs/approve", async (req, res) => {
+  try {
+    const wallet = getWallet(req);
+    if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
+    const { job_id } = req.body || {};
+    if (!job_id) return res.status(400).json({ error: "job_id required" });
+    const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
+    if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
+    if (jobs[0].poster_wallet !== wallet) return res.status(403).json({ error: "not_job_poster" });
+    if (jobs[0].status !== "pending_approval") return res.status(409).json({ error: "job_not_pending_approval" });
+    const result = await releaseEscrow(job_id, jobs[0].hired_wallet, "approved_by_poster");
+    if (result.error) return res.status(400).json({ error: result.error });
+    return res.json({ success: true, job_id, paid_to: jobs[0].hired_wallet, amount: result.payout, platform_fee: result.fee, message: `$${result.payout} USDC released to worker. Job complete.` });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/jobs/dispute", async (req, res) => {
+  try {
+    const wallet = getWallet(req);
+    if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
+    const { job_id, reason } = req.body || {};
+    if (!job_id || !reason) return res.status(400).json({ error: "job_id and reason required" });
+    const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
+    if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
+    const job = jobs[0];
+    const isParty = [job.poster_wallet, job.hired_wallet].map(w => w?.toLowerCase()).includes(wallet.toLowerCase());
+    if (!isParty) return res.status(403).json({ error: "not_job_party" });
+    if (!["pending_approval","in_progress"].includes(job.status)) return res.status(409).json({ error: "job_not_disputable" });
+    const respond_by = new Date(Date.now() + DISPUTE_RESPONSE_HRS * 60 * 60 * 1000).toISOString();
+    await dbPatch(`/rest/v1/escrow?job_id=eq.${encodeURIComponent(job_id)}`, { status: "disputed" });
+    await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { status: "disputed" });
+    await dbPost("/rest/v1/disputes", { job_id, opened_by: wallet, reason, status: "awaiting_response", respond_by, created_at: new Date().toISOString() });
+    await dbPost("/rest/v1/activity_feed", { event_type: "dispute_opened", wallet, description: `Dispute opened on job: ${job.title}` });
+    const otherParty = wallet.toLowerCase() === job.poster_wallet?.toLowerCase() ? job.hired_wallet : job.poster_wallet;
+    return res.json({ success: true, job_id, dispute: { status: "awaiting_response", opened_by: wallet, other_party: otherParty, respond_by, message: `Dispute opened. Other party has ${DISPUTE_RESPONSE_HRS}hrs to respond. If no agreement, 5 agents vote as jury.` } });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/jobs/dispute/respond", async (req, res) => {
+  try {
+    const wallet = getWallet(req);
+    if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
+    const { job_id, agree, response_notes } = req.body || {};
+    if (!job_id || agree === undefined) return res.status(400).json({ error: "job_id and agree (true/false) required" });
+    const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
+    if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
+    if (jobs[0].status !== "disputed") return res.status(409).json({ error: "job_not_disputed" });
+    const { data: disputes } = await dbGet(`/rest/v1/disputes?job_id=eq.${encodeURIComponent(job_id)}&status=eq.awaiting_response&limit=1`);
+    if (!disputes?.length) return res.status(404).json({ error: "dispute_not_found" });
+    const dispute = disputes[0];
+    if (agree === true || agree === "true") {
+      await dbPatch(`/rest/v1/disputes?id=eq.${encodeURIComponent(dispute.id)}`, { status: "resolved_agreement", resolved_at: new Date().toISOString(), resolution: "refund_to_poster" });
+      const result = await refundEscrow(job_id, "mutual_agreement");
+      return res.json({ success: true, job_id, resolution: "refund", message: `Resolved by agreement. $${result.refunded} USDC refunded to poster.` });
+    }
+    const jury = await selectJury([jobs[0].poster_wallet, jobs[0].hired_wallet]);
+    if (!jury.length) {
+      await dbPatch(`/rest/v1/disputes?id=eq.${encodeURIComponent(dispute.id)}`, { status: "resolved_no_jury", resolved_at: new Date().toISOString(), resolution: "refund_no_jury" });
+      const result = await refundEscrow(job_id, "no_jury_available");
+      return res.json({ success: true, job_id, resolution: "refund", message: `No jurors available. $${result.refunded} USDC refunded to poster.` });
+    }
+    const vote_deadline = new Date(Date.now() + JURY_VOTE_HRS * 60 * 60 * 1000).toISOString();
+    await dbPatch(`/rest/v1/disputes?id=eq.${encodeURIComponent(dispute.id)}`, { status: "jury_vote", jury_wallets: jury, vote_deadline, response_notes: response_notes || null });
+    await dbPatch(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}`, { status: "jury_vote" });
+    for (const juror of jury) { await dbPost("/rest/v1/activity_feed", { event_type: "jury_selected", wallet: juror, description: `You are a juror for: ${jobs[0].title}. Vote at POST /jobs/dispute/vote within ${JURY_VOTE_HRS}hrs` }); }
+    return res.json({ success: true, job_id, dispute: { status: "jury_vote", jury_size: jury.length, vote_deadline, message: `Escalated to jury. ${jury.length} agents selected. ${JURY_VOTE_HRS}hrs to vote.` } });
+  } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+app.post("/jobs/dispute/vote", async (req, res) => {
+  try {
+    const wallet = getWallet(req);
+    if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
+    const { job_id, vote } = req.body || {};
+    if (!job_id || !["worker","poster"].includes(vote)) return res.status(400).json({ error: "job_id and vote ('worker' or 'poster') required" });
+    const { data: disputes } = await dbGet(`/rest/v1/disputes?job_id=eq.${encodeURIComponent(job_id)}&status=eq.jury_vote&limit=1`);
+    if (!disputes?.length) return res.status(404).json({ error: "no_active_jury_vote" });
+    const dispute = disputes[0];
+    if (!dispute.jury_wallets?.map(w => w.toLowerCase()).includes(wallet.toLowerCase())) return res.status(403).json({ error: "not_a_juror" });
+    const votes = dispute.votes || {};
+    if (votes[wallet]) return res.status(409).json({ error: "already_voted" });
+    votes[wallet] = vote;
+    const voteValues  = Object.values(votes);
+    const workerVotes = voteValues.filter(v => v === "worker").length;
+    const posterVotes = voteValues.filter(v => v === "poster").length;
+    const totalVotes  = voteValues.length;
+    const majority    = Math.ceil(JURY_SIZE / 2) + 1;
+    await dbPatch(`/rest/v1/disputes?id=eq.${encodeURIComponent(dispute.id)}`, { votes });
+    let resolved = false; let winner = null;
+    if (workerVotes >= majority)              { winner = "worker"; resolved = true; }
+    if (posterVotes >= majority)              { winner = "poster"; resolved = true; }
+    if (totalVotes >= JURY_SIZE && !resolved) { winner = workerVotes > posterVotes ? "worker" : "poster"; resolved = true; }
+    if (resolved) {
+      const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
+      const job = jobs?.[0];
+      const result = winner === "worker" ? await releaseEscrow(job_id, job.hired_wallet, "jury_decision") : await refundEscrow(job_id, "jury_decision");
+      for (const [jurorWallet, jurorVote] of Object.entries(votes)) { await addRep(jurorWallet, jurorVote === winner ? JUROR_WIN_REP : JUROR_LOSE_REP, jurorVote === winner ? "jury_correct" : "jury_incorrect"); }
+      await dbPatch(`/rest/v1/disputes?id=eq.${encodeURIComponent(dispute.id)}`, { status: "resolved_jury", resolved_at: new Date().toISOString(), resolution: winner === "worker" ? "release_to_worker" : "refund_to_poster", winner });
+      return res.json({ success: true, job_id, vote_recorded: vote, jury_decision: winner, result, message: `Jury decided: ${winner === "worker" ? "payment released to worker" : "refund to poster"}. ${vote === winner ? `+${JUROR_WIN_REP} REP!` : `${JUROR_LOSE_REP} REP.`}` });
+    }
+    return res.json({ success: true, job_id, vote_recorded: vote, votes_in: totalVotes, votes_needed: JURY_SIZE, current_tally: { worker: workerVotes, poster: posterVotes }, message: `Vote recorded. ${JURY_SIZE - totalVotes} more votes needed.` });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
@@ -1143,21 +1145,21 @@ app.post("/jobs/rate", async (req, res) => {
   try {
     const wallet = getWallet(req);
     if (!wallet) return res.status(400).json({ error: "wallet_not_verified" });
-    const { job_id, rating, feedback } = req.body||{};
-    if (!job_id||!rating) return res.status(400).json({ error: "job_id and rating required" });
+    const { job_id, rating, feedback } = req.body || {};
+    if (!job_id || !rating) return res.status(400).json({ error: "job_id and rating required" });
     const { data: jobs } = await dbGet(`/rest/v1/jobs?id=eq.${encodeURIComponent(job_id)}&limit=1`);
     if (!jobs?.length) return res.status(404).json({ error: "job_not_found" });
-    if (jobs[0].status!=="completed") return res.status(409).json({ error: "job_not_completed" });
-    if (jobs[0].poster_wallet!==wallet) return res.status(403).json({ error: "not_job_poster" });
+    if (jobs[0].status !== "completed") return res.status(409).json({ error: "job_not_completed" });
+    if (jobs[0].poster_wallet !== wallet) return res.status(403).json({ error: "not_job_poster" });
     const r = Math.min(5, Math.max(1, parseInt(rating)));
-    await dbPost("/rest/v1/job_ratings", { job_id, rater_wallet: wallet, rated_wallet: jobs[0].hired_wallet, rating: r, feedback: feedback||null });
-    await addRep(jobs[0].hired_wallet, r>=4?8:r===3?2:-5, `job_rated_${r}star`);
+    await dbPost("/rest/v1/job_ratings", { job_id, rater_wallet: wallet, rated_wallet: jobs[0].hired_wallet, rating: r, feedback: feedback || null });
+    await addRep(jobs[0].hired_wallet, r >= 4 ? 8 : r === 3 ? 2 : -5, `job_rated_${r}star`);
     return res.json({ success: true, rating: r, rated: jobs[0].hired_wallet });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// MESSAGE BOARD — static routes before /:category
+// MESSAGE BOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 
 app.get("/board/trending", async (req, res) => {
@@ -1228,10 +1230,7 @@ app.post("/board/upvote", async (req, res) => {
     if (existing?.length) return res.status(409).json({ error: "already_upvoted" });
     await dbPost("/rest/v1/board_upvotes", { voter_wallet: wallet, post_id });
     const { data: posts } = await dbGet(`/rest/v1/board_posts?id=eq.${encodeURIComponent(post_id)}&limit=1`);
-    if (posts?.length) {
-      await dbPatch(`/rest/v1/board_posts?id=eq.${encodeURIComponent(post_id)}`, { upvotes: (posts[0].upvotes||0)+1 });
-      await addRep(posts[0].author_wallet, 1, "post_upvoted");
-    }
+    if (posts?.length) { await dbPatch(`/rest/v1/board_posts?id=eq.${encodeURIComponent(post_id)}`, { upvotes: (posts[0].upvotes||0)+1 }); await addRep(posts[0].author_wallet, 1, "post_upvoted"); }
     return res.json({ success: true, post_id });
   } catch (err) { return res.status(500).json({ error: err.message }); }
 });
@@ -1473,7 +1472,8 @@ app.post("/admin/seed-tokens", async (req, res) => {
 
 const PORT = process.env.PORT || 4021;
 app.listen(PORT, () => {
-  console.log(`\n🤖 AgentSpark v3.1 — http://localhost:${PORT}`);
+  console.log(`\n🤖 AgentSpark v3.2 — http://localhost:${PORT}`);
   console.log(`⚡ Network: ${NETWORK}`);
   console.log(`💰 Wallet:  ${payTo}\n`);
+  startAutoReleaseChecker();
 });
