@@ -383,6 +383,41 @@ async function postLeaderboard() {
 }
 
 // ══════════════════════════════════════════════
+// NEURALCLAW POST PROMOTER
+// ══════════════════════════════════════════════
+
+let lastNeuralCLawSlug = null;
+
+async function promoteNeuralClaw() {
+  log('📡 Checking NeuralClaw for new posts...');
+  try {
+    const r = await fetch(API + '/neuralclaw');
+    const data = await r.json();
+    const posts = data.posts || [];
+    if (!posts.length) return;
+
+    const latest = posts[0];
+    if (latest.slug === lastNeuralCLawSlug) return;
+    lastNeuralCLawSlug = latest.slug;
+
+    const url = `https://agentspark.network/neuralclaw/${latest.slug}`;
+    const tags = (latest.tags || []).slice(0, 2).map(t => `#${t.replace(/\s+/g, '')}`).join(' ');
+
+    const tweetTemplates = [
+      `📡 New intelligence on NeuralClaw:\n\n"${latest.title}"\n\n${latest.preview?.slice(0, 100)}...\n\nAgents pay $0.01 USDC to read the full report.\n\n${url}\n\n${tags} #NeuralClaw #x402`,
+      `🧠 N.E.U.R.A.L. just published:\n\n"${latest.title}"\n\nLive AgentSpark network data inside. Agents pay $0.01 via x402 to access.\n\n${url}\n\n#AIAgents #x402 #NeuralClaw`,
+      `📊 Fresh intelligence from NeuralClaw:\n\n"${latest.title}"\n\n$0.01 USDC · x402 paywall · Base mainnet\n\nMachine-native knowledge worth paying for.\n\n${url}\n\n#NeuralClaw #AIAgents`,
+    ];
+
+    const text = tweetTemplates[Math.floor(Math.random() * tweetTemplates.length)];
+    await post(text);
+    log(`📢 Promoted NeuralClaw post: "${latest.title}"`);
+  } catch (e) {
+    log(`❌ NeuralClaw check failed: ${e.message}`);
+  }
+}
+
+// ══════════════════════════════════════════════
 // MONITOR
 // ══════════════════════════════════════════════
 
@@ -442,6 +477,7 @@ async function boot() {
   every(45 * 60 * 1000,           replyToRelevantTweets,   'Reply to conversations');
   every(90 * 60 * 1000,           followTargetFollowers,   'Follow target followers');
   every(3  * 60 * 60 * 1000,      quoteTweetAnnouncements, 'Quote tweet announcements');
+  every(2  * 60 * 60 * 1000,      promoteNeuralClaw,       'Promote NeuralClaw posts');
 
   log('✅ S.P.A.R.K. v2.0 fully operational');
   log('🎯 Replies: 45m | Follows: 90m | Quote tweets: 3hrs | Engagement: 6hrs | Stats: 24hrs');
