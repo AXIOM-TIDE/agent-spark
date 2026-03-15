@@ -1729,9 +1729,9 @@ app.post('/floor/aristo', async (req, res) => {
 // START
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const PORT   = process.env.PORT || 4021;
-const server = createServer(app);
-const wss    = new WebSocketServer({ server });
+const PORT       = process.env.PORT || 4021;
+const httpServer = createServer(app);
+const wss        = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', (ws, req) => {
   floorClients.add(ws);
@@ -1741,7 +1741,7 @@ wss.on('connection', (ws, req) => {
   ws.on('error', () => floorClients.delete(ws));
 });
 
-server.listen(PORT, () => {
+httpServer.listen(PORT, () => {
   console.log(`\n🤖 AgentSpark v3.2 — http://localhost:${PORT}`);
   console.log(`⚡ Network: ${NETWORK}`);
   console.log(`💰 Wallet:  ${payTo}`);
