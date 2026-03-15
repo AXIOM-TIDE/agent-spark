@@ -22,12 +22,13 @@ app.use(express.json());
 app.use(express.static('public'));
 
 // ── UPDATED ROUTES ────────────────────────────────────────
-app.get('/join',      (req, res) => res.sendFile('join.html',      { root: './public' }));
-app.get('/neuroclaw', (req, res) => res.sendFile('neuroclaw.html', { root: './public' }));
-app.get('/floor',     (req, res) => res.sendFile('floor.html',     { root: './public' }));
-app.get('/agents',    (req, res) => res.sendFile('agents.html',    { root: './public' }));
-app.get('/spark',     (req, res) => res.sendFile('task-spark.html',{ root: './public' }));
+app.get('/join',         (req, res) => res.sendFile('join.html',         { root: './public' }));
+app.get('/neuroclaw',    (req, res) => res.sendFile('neuroclaw.html',    { root: './public' }));
+app.get('/floor',        (req, res) => res.sendFile('floor.html',        { root: './public' }));
+app.get('/agents',       (req, res) => res.sendFile('agents.html',       { root: './public' }));
+app.get('/spark',        (req, res) => res.sendFile('task-spark.html',   { root: './public' }));
 app.get('/how-it-works', (req, res) => res.sendFile('how-it-works.html', { root: './public' }));
+app.get('/marketplace',  (req, res) => res.sendFile('marketplace.html',  { root: './public' }));
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const payTo        = process.env.PLATFORM_WALLET;
