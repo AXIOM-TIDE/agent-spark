@@ -475,9 +475,21 @@
   }
 
   async function connectWallet() {
-    const btn = document.getElementById('as-wallet-btn');
-    if (btn && btn.classList.contains('as-connected')) return;
-    if (btn) btn.textContent = 'CONNECTING...';
+    const allBtns = ['as-wallet-btn','as-wallet-drawer'].map(id=>document.getElementById(id)).filter(Boolean);
+    if (allBtns[0]?.classList.contains('as-connected')) return;
+    allBtns.forEach(b => b.textContent = 'CONNECTING...');
+
+    function reset() { allBtns.forEach(b => b.textContent = 'CONNECT WALLET'); }
+
+    function loadScript(src, ms=6000) {
+      return new Promise((res,rej)=>{
+        const s=document.createElement('script'); s.src=src;
+        const t=setTimeout(()=>rej(new Error('timeout')),ms);
+        s.onload=()=>{clearTimeout(t);res();};
+        s.onerror=()=>{clearTimeout(t);rej(new Error('failed'));};
+        document.head.appendChild(s);
+      });
+    }
 
     try {
       // Option 1 — MetaMask or any injected provider
@@ -486,30 +498,23 @@
         if (accounts?.[0]) { setWalletConnected(accounts[0]); return; }
       }
 
-      // Option 2 — Coinbase Wallet SDK (WalletConnect fallback, works on mobile)
-      if (!window.CoinbaseWalletSDK) {
-        await new Promise((resolve, reject) => {
-          const s = document.createElement('script');
-          s.src = 'https://cdn.jsdelivr.net/npm/@coinbase/wallet-sdk@3/dist/browser/coinbase-wallet-sdk.min.js';
-          s.onload = resolve; s.onerror = reject;
-          document.head.appendChild(s);
-        });
-      }
+      // Option 2 — Coinbase Wallet SDK with timeout
+      try {
+        if (!window.CoinbaseWalletSDK) {
+          await loadScript('https://cdn.jsdelivr.net/npm/@coinbase/wallet-sdk@3/dist/browser/coinbase-wallet-sdk.min.js');
+        }
+        if (window.CoinbaseWalletSDK) {
+          const sdk = new window.CoinbaseWalletSDK({ appName:'AgentSpark.Network', darkMode:true });
+          const provider = sdk.makeWeb3Provider('https://mainnet.base.org', 8453);
+          const accounts = await provider.request({ method:'eth_requestAccounts' });
+          if (accounts?.[0]) { setWalletConnected(accounts[0]); return; }
+        }
+      } catch(e) { console.warn('[Wallet SDK]', e.message); }
 
-      const sdk = new window.CoinbaseWalletSDK({
-        appName: 'AgentSpark.Network',
-        appLogoUrl: 'https://agentspark.network/favicon.ico',
-        darkMode: true,
-      });
-      const provider = sdk.makeWeb3Provider('https://mainnet.base.org', 8453);
-      const accounts = await provider.request({ method: 'eth_requestAccounts' });
-      if (accounts?.[0]) { setWalletConnected(accounts[0]); return; }
-
-      if (btn) btn.textContent = 'CONNECT WALLET';
-
+      reset();
     } catch (err) {
-      console.error('[Wallet]', err.message);
-      if (btn) btn.textContent = 'CONNECT WALLET';
+      console.warn('[Wallet]', err.message);
+      reset();
     }
   }
 
