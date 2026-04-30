@@ -86,9 +86,11 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const NETWORK      = process.env.NETWORK || "eip155:84532";
 
-if (!payTo)        throw new Error("Missing PLATFORM_WALLET");
-if (!SUPABASE_URL) throw new Error("Missing SUPABASE_URL");
-if (!SUPABASE_KEY) throw new Error("Missing SUPABASE_KEY");
+const legacyRuntimeReady = Boolean(payTo && SUPABASE_URL && SUPABASE_KEY);
+
+if (!legacyRuntimeReady) {
+  console.warn("[BOOT] Legacy x402/Supabase runtime not fully configured; public CONK status routes remain online.");
+}
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const AGENT_TYPES        = ["researcher","trader","creative","assistant","analyzer","coder","educator","coordinator","other"];
@@ -104,24 +106,28 @@ const facilitatorConfig = isMainnet
 const facilitatorClient = new HTTPFacilitatorClient(facilitatorConfig);
 const server = new x402ResourceServer(facilitatorClient).register(NETWORK, new ExactEvmScheme());
 
-app.use(paymentMiddleware({
-  "POST /agents/register":     { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Register an AI agent",       mimeType: "application/json" },
-  "POST /passes/activate":     { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "24-hour access pass",         mimeType: "application/json" },
-  "POST /skills/post":         { accepts: [{ scheme: "exact", price: "$0.003", network: NETWORK, payTo }], description: "Post a skill",                mimeType: "application/json" },
-  "POST /skills/query":        { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Query a skill",               mimeType: "application/json" },
-  "POST /skills/tip":          { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Tip an agent",                mimeType: "application/json" },
-  "POST /skills/review":       { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Review a skill",              mimeType: "application/json" },
-  "POST /skills/remix":        { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Remix a skill",               mimeType: "application/json" },
-  "POST /agents/vouch":        { accepts: [{ scheme: "exact", price: "$0.01",  network: NETWORK, payTo }], description: "Vouch for an agent",          mimeType: "application/json" },
-  "POST /agents/challenge":    { accepts: [{ scheme: "exact", price: "$0.02",  network: NETWORK, payTo }], description: "Challenge reputation",        mimeType: "application/json" },
-  "POST /network/message":     { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Agent-to-agent message",      mimeType: "application/json" },
-  "POST /network/collaborate": { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Propose collaboration",       mimeType: "application/json" },
-  "POST /network/accept":      { accepts: [{ scheme: "exact", price: "$0.002", network: NETWORK, payTo }], description: "Accept collaboration",        mimeType: "application/json" },
-  "POST /skills/co-create":    { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Co-create a skill",           mimeType: "application/json" },
-}, server));
+if (payTo) {
+  app.use(paymentMiddleware({
+    "POST /agents/register":     { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Register an AI agent",       mimeType: "application/json" },
+    "POST /passes/activate":     { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "24-hour access pass",         mimeType: "application/json" },
+    "POST /skills/post":         { accepts: [{ scheme: "exact", price: "$0.003", network: NETWORK, payTo }], description: "Post a skill",                mimeType: "application/json" },
+    "POST /skills/query":        { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Query a skill",               mimeType: "application/json" },
+    "POST /skills/tip":          { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Tip an agent",                mimeType: "application/json" },
+    "POST /skills/review":       { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Review a skill",              mimeType: "application/json" },
+    "POST /skills/remix":        { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Remix a skill",               mimeType: "application/json" },
+    "POST /agents/vouch":        { accepts: [{ scheme: "exact", price: "$0.01",  network: NETWORK, payTo }], description: "Vouch for an agent",          mimeType: "application/json" },
+    "POST /agents/challenge":    { accepts: [{ scheme: "exact", price: "$0.02",  network: NETWORK, payTo }], description: "Challenge reputation",        mimeType: "application/json" },
+    "POST /network/message":     { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Agent-to-agent message",      mimeType: "application/json" },
+    "POST /network/collaborate": { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Propose collaboration",       mimeType: "application/json" },
+    "POST /network/accept":      { accepts: [{ scheme: "exact", price: "$0.002", network: NETWORK, payTo }], description: "Accept collaboration",        mimeType: "application/json" },
+    "POST /skills/co-create":    { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Co-create a skill",           mimeType: "application/json" },
+  }, server));
+}
 
 // ─── Database helpers ─────────────────────────────────────────────────────────
 async function db(path, method = "GET", payload = null) {
+  if (!SUPABASE_URL || !SUPABASE_KEY) throw new Error("Supabase runtime not configured");
+
   const res = await fetch(`${SUPABASE_URL}${path}`, {
     method,
     headers: {
