@@ -7,3 +7,12 @@ dist/
 coverage/
 *.log
 cdp_api_key.json
+# Never upload your real .env to GitHub — it contains your wallet and API keys
+.env
+
+# Node modules — Railway installs these automatically
+node_modules/
+
+# Misc
+.DS_Store
+*.log
