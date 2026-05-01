@@ -6,10 +6,7 @@ import fs from 'fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
-import { paymentMiddleware, x402ResourceServer } from "@x402/express";
-import { ExactEvmScheme } from "@x402/evm/exact/server";
-import { HTTPFacilitatorClient } from "@x402/core/server";
-import { createFacilitatorConfig } from "@coinbase/x402";
+// x402 / Coinbase legacy payment rail removed — CONK is the payment protocol.
 import { initAllConkCitizens, listConkCitizens } from "./src/conk/citizenship.js";
 import { createAgentConkClient } from "./src/conk/agent-citizen.js";
 import { AGENTS } from "./src/config/agents.js";
@@ -151,39 +148,7 @@ const MIN_WITHDRAWAL     = 5.00;
 const FOUNDING_LIMIT     = 1000;
 const TOKENS_PER_FOUNDER = 2;
 
-// ─── x402 Setup ───────────────────────────────────────────────────────────────
-// Wrapped in try/catch — crypto may be unavailable in some Railway environments.
-// x402 failure must never crash the server; CONK + dashboard routes are primary.
-let x402Server = null;
-try {
-  const isMainnet = NETWORK === "eip155:8453";
-  const facilitatorConfig = isMainnet
-    ? createFacilitatorConfig(process.env.CDP_API_KEY_ID, process.env.CDP_API_KEY_SECRET)
-    : { url: "https://x402.org/facilitator" };
-  const facilitatorClient = new HTTPFacilitatorClient(facilitatorConfig);
-  x402Server = new x402ResourceServer(facilitatorClient).register(NETWORK, new ExactEvmScheme());
-  console.log("[x402] Initialized — network:", NETWORK);
-} catch (err) {
-  console.warn("[x402] Initialization failed (non-fatal):", err.message);
-}
-
-if (payTo && x402Server) {
-  app.use(paymentMiddleware({
-    "POST /agents/register":     { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Register an AI agent",       mimeType: "application/json" },
-    "POST /passes/activate":     { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "24-hour access pass",         mimeType: "application/json" },
-    "POST /skills/post":         { accepts: [{ scheme: "exact", price: "$0.003", network: NETWORK, payTo }], description: "Post a skill",                mimeType: "application/json" },
-    "POST /skills/query":        { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Query a skill",               mimeType: "application/json" },
-    "POST /skills/tip":          { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Tip an agent",                mimeType: "application/json" },
-    "POST /skills/review":       { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Review a skill",              mimeType: "application/json" },
-    "POST /skills/remix":        { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Remix a skill",               mimeType: "application/json" },
-    "POST /agents/vouch":        { accepts: [{ scheme: "exact", price: "$0.01",  network: NETWORK, payTo }], description: "Vouch for an agent",          mimeType: "application/json" },
-    "POST /agents/challenge":    { accepts: [{ scheme: "exact", price: "$0.02",  network: NETWORK, payTo }], description: "Challenge reputation",        mimeType: "application/json" },
-    "POST /network/message":     { accepts: [{ scheme: "exact", price: "$0.001", network: NETWORK, payTo }], description: "Agent-to-agent message",      mimeType: "application/json" },
-    "POST /network/collaborate": { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Propose collaboration",       mimeType: "application/json" },
-    "POST /network/accept":      { accepts: [{ scheme: "exact", price: "$0.002", network: NETWORK, payTo }], description: "Accept collaboration",        mimeType: "application/json" },
-    "POST /skills/co-create":    { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Co-create a skill",           mimeType: "application/json" },
-  }, x402Server));
-}
+// Payment middleware removed — routes handle CONK-based payment logic directly.
 
 // ─── Database helpers ─────────────────────────────────────────────────────────
 async function db(path, method = "GET", payload = null) {
