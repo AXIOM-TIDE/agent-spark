@@ -9,7 +9,7 @@ import { createFacilitatorConfig } from "@coinbase/x402";
 import { initAllConkCitizens, listConkCitizens } from "./src/conk/citizenship.js";
 import { createAgentConkClient } from "./src/conk/agent-citizen.js";
 import { AGENTS } from "./src/config/agents.js";
-import { Cast } from "@axiomtide/conk-sdk";
+import { bcs }   from '@mysten/sui/bcs';
 
 const conkCitizens = await initAllConkCitizens();
 const webConkCitizen = conkCitizens.find(c => c.agentId === 'web');
@@ -1876,23 +1876,6 @@ const VESSEL_IDS = {
   web:      '0x52bf2dff2a4e067566def4192e60895057e1a21e85fe0684f5971f8c4b7c3862',
 };
 
-// Build a raw keypair signer from a ConkClient's private key env var
-function buildAgentSigner(conk) {
-  const suiClient = conk.suiClient;
-  const addr      = conk.currentAddress();
-  // We need to re-create the keypair since ConkClient.buildSigner() is private.
-  // Extract from the ConkClient instance via its internal keypair reference.
-  // Because ConkClient exposes currentAddress() in keypair mode, we know it's
-  // authenticated. We'll pass the raw signAndExecute through a thin wrapper.
-  return async (tx) => {
-    // Use suiClient.signAndExecuteTransaction via the keypair inside ConkClient.
-    // Since buildSigner is private, we access the signer from the ConkClient's
-    // private field by calling its transaction-building path.
-    // Workaround: expose via a synthetic Harbor.load that we call internally.
-    // Simpler: rebuild keypair from env — we have the privateKeyEnv.
-    throw new Error('use buildRawSigner() directly with the private key');
-  };
-}
 
 import { Ed25519Keypair } from '@mysten/sui/keypairs/ed25519';
 import { Transaction }    from '@mysten/sui/transactions';
@@ -1925,7 +1908,15 @@ function buildRawSigner(privateKeyHex, suiClient) {
 
 const CONK_SUI_CLIENT = new SuiClient({ url: 'https://fullnode.mainnet.sui.io:443' });
 
+// CONK contract constants
+const ABYSS_OBJ  = '0x22d066f6337d68848e389402926b4a10424d9728744efb9e6dd0d0ca1c5921c7';
+const CLOCK_OBJ  = '0x0000000000000000000000000000000000000000000000000000000000000006';
+const SOUND_FEE  = 1000n; // $0.001 = 1000 USDC base units
+const USDC_TYPE_FULL = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC';
+const textEnc = new TextEncoder();
+
 // Sound a Cast for a named agent using its env-stored private key
+// PTB derived from on-chain tx: CWWbABJn2vXH9EnDZTjeC9DmfuBRR2v18cgJMVXSY4DL
 async function agentSoundCast(agentId, env = process.env) {
   const agentCfg = AGENTS.find(a => a.id === agentId);
   if (!agentCfg) throw new Error(`Unknown agent: ${agentId}`);
@@ -1938,34 +1929,52 @@ async function agentSoundCast(agentId, env = process.env) {
 
   const { address, signer } = buildRawSigner(privateKey, CONK_SUI_CLIENT);
 
-  const syntheticSession = {
-    address,
-    proof:            {},
-    ephemeralKeyPair: { publicKey: '', privateKey: '' },
-    maxEpoch:         0,
-    randomness:       '',
-    salt:             '',
-  };
+  // Get USDC coins for this agent
+  const coins = await CONK_SUI_CLIENT.getCoins({ owner: address, coinType: USDC_TYPE_FULL });
+  if (!coins.data.length) throw new Error(`${agentCfg.displayName} has no USDC coins`);
+  const usdcCoinId = coins.data[0].coinObjectId;
 
-  const cast = await Cast.publish(
-    CONK_SUI_CLIENT,
-    'mainnet',
-    syntheticSession,
-    vesselId,
-    {
-      hook:     `[PHASE 1] ${agentCfg.displayName} IS LIVE ON CONK`,
-      body:     `AgentSpark Phase 1 test Cast. Agent: ${agentCfg.displayName}. Role: ${agentCfg.role}. Timestamp: ${new Date().toISOString()}. CONK substrate verified.`,
-      price:    0.001,
-      mode:     'open',
-      duration: '24h',
-    },
-    signer,
+  const hook = `[PHASE 1] ${agentCfg.displayName} IS LIVE ON CONK`;
+  const body = `AgentSpark Phase 1 test Cast. Agent: ${agentCfg.displayName}. Role: ${agentCfg.role}. Timestamp: ${new Date().toISOString()}.`;
+
+  const tx = new Transaction();
+  const [paymentCoin] = tx.splitCoins(tx.object(usdcCoinId), [SOUND_FEE]);
+
+  tx.moveCall({
+    target: `${CONK_PACKAGE}::cast::sound`,
+    arguments: [
+      paymentCoin,
+      tx.object(ABYSS_OBJ),
+      tx.pure.id(vesselId),
+      tx.pure.u8(0),                                                          // mode: open
+      tx.pure.vector('u8', Array.from(textEnc.encode(hook))),
+      tx.pure.vector('u8', Array.from(textEnc.encode(body))),
+      tx.pure(bcs.vector(bcs.vector(bcs.u8())).serialize([]).toBytes()),       // Option<vector<u8>> = None
+      tx.pure.u8(0),                                                          // auto_response flag
+      tx.pure.address(vesselId),                                              // author vessel address
+      tx.pure.u8(1),                                                          // duration: 24h
+      tx.pure.u64(SOUND_FEE),                                                 // price
+      tx.object(CLOCK_OBJ),
+    ],
+  });
+
+  const { digest } = await signer(tx);
+
+  // Find Cast object in tx output
+  const txData = await CONK_SUI_CLIENT.getTransactionBlock({
+    digest, options: { showObjectChanges: true },
+  });
+  const castObj = txData.objectChanges?.find(
+    c => c.type === 'created' && c.objectType?.includes('::cast::Cast'),
   );
+  const castId = castObj?.objectId ?? 'CAST_ID_MISSING';
+  const url = `https://conk.app/cast/${castId}`;
 
-  return { agentId, castId: cast.id, txDigest: cast.txDigest, url: cast.url, address };
+  return { agentId, castId, txDigest: digest, url, address };
 }
 
 // Read a Cast as a named agent (cross-agent read)
+// cast::read(cast: &mut Cast, payment: Coin<USDC>, abyss: &mut Abyss, reader: address, clock: &Clock, ctx: &mut TxContext)
 async function agentReadCast(readerAgentId, castId, env = process.env) {
   const agentCfg = AGENTS.find(a => a.id === readerAgentId);
   if (!agentCfg) throw new Error(`Unknown agent: ${readerAgentId}`);
@@ -1973,19 +1982,36 @@ async function agentReadCast(readerAgentId, castId, env = process.env) {
   const privateKey = env[agentCfg.privateKeyEnv];
   if (!privateKey) throw new Error(`Missing ${agentCfg.privateKeyEnv}`);
 
-  const vesselId = VESSEL_IDS[readerAgentId];
   const { address, signer } = buildRawSigner(privateKey, CONK_SUI_CLIENT);
 
-  // Cast.read() performs the USDC micropayment and retrieves content
-  const result = await Cast.read(
-    CONK_SUI_CLIENT,
-    'mainnet',
-    vesselId,
-    { castId },
-    signer,
-  );
+  // Get USDC coins for reader
+  const coins = await CONK_SUI_CLIENT.getCoins({ owner: address, coinType: USDC_TYPE_FULL });
+  if (!coins.data.length) throw new Error(`${agentCfg.displayName} has no USDC coins`);
+  const usdcCoinId = coins.data[0].coinObjectId;
 
-  return { readerAgentId, castId, txDigest: result.receipt?.txDigest, hook: result.hook, address };
+  // Get the Cast object to determine the read price
+  const castObj = await CONK_SUI_CLIENT.getObject({
+    id: castId, options: { showContent: true },
+  });
+  const castFields = castObj.data?.content?.fields || {};
+  const readPrice = BigInt(castFields.price ?? '1000'); // default $0.001
+
+  const tx = new Transaction();
+  const [paymentCoin] = tx.splitCoins(tx.object(usdcCoinId), [readPrice]);
+
+  tx.moveCall({
+    target: `${CONK_PACKAGE}::cast::read`,
+    arguments: [
+      tx.object(castId),        // &mut Cast
+      paymentCoin,              // Coin<USDC>
+      tx.object(ABYSS_OBJ),    // &mut Abyss
+      tx.pure.address(address), // reader address
+      tx.object(CLOCK_OBJ),    // &Clock
+    ],
+  });
+
+  const { digest } = await signer(tx);
+  return { readerAgentId, castId, txDigest: digest, address };
 }
 
 // ── Serve the dashboard HTML
