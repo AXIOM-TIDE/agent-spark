@@ -2028,8 +2028,9 @@ app.get('/conk/dashboard-data', async (req, res) => {
       suiRpc('suix_getBalance', [c.address, SUI_COIN_TYPE]).catch(() => null),
     ]);
 
+    // Query events from the 'cast' module (CastSounded, CastRead, FeeReceived)
     const eventsCall = suiRpc('suix_queryEvents', [
-      { Package: CONK_PACKAGE }, null, 20, true
+      { MoveModule: { package: CONK_PACKAGE, module: 'cast' } }, null, 20, true
     ]).catch(() => ({ data: [] }));
 
     const [balances, eventsResult] = await Promise.all([
