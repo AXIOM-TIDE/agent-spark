@@ -152,14 +152,22 @@ const FOUNDING_LIMIT     = 1000;
 const TOKENS_PER_FOUNDER = 2;
 
 // ─── x402 Setup ───────────────────────────────────────────────────────────────
-const isMainnet = NETWORK === "eip155:8453";
-const facilitatorConfig = isMainnet
-  ? createFacilitatorConfig(process.env.CDP_API_KEY_ID, process.env.CDP_API_KEY_SECRET)
-  : { url: "https://x402.org/facilitator" };
-const facilitatorClient = new HTTPFacilitatorClient(facilitatorConfig);
-const server = new x402ResourceServer(facilitatorClient).register(NETWORK, new ExactEvmScheme());
+// Wrapped in try/catch — crypto may be unavailable in some Railway environments.
+// x402 failure must never crash the server; CONK + dashboard routes are primary.
+let x402Server = null;
+try {
+  const isMainnet = NETWORK === "eip155:8453";
+  const facilitatorConfig = isMainnet
+    ? createFacilitatorConfig(process.env.CDP_API_KEY_ID, process.env.CDP_API_KEY_SECRET)
+    : { url: "https://x402.org/facilitator" };
+  const facilitatorClient = new HTTPFacilitatorClient(facilitatorConfig);
+  x402Server = new x402ResourceServer(facilitatorClient).register(NETWORK, new ExactEvmScheme());
+  console.log("[x402] Initialized — network:", NETWORK);
+} catch (err) {
+  console.warn("[x402] Initialization failed (non-fatal):", err.message);
+}
 
-if (payTo) {
+if (payTo && x402Server) {
   app.use(paymentMiddleware({
     "POST /agents/register":     { accepts: [{ scheme: "exact", price: "$0.03",  network: NETWORK, payTo }], description: "Register an AI agent",       mimeType: "application/json" },
     "POST /passes/activate":     { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "24-hour access pass",         mimeType: "application/json" },
@@ -174,7 +182,7 @@ if (payTo) {
     "POST /network/collaborate": { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Propose collaboration",       mimeType: "application/json" },
     "POST /network/accept":      { accepts: [{ scheme: "exact", price: "$0.002", network: NETWORK, payTo }], description: "Accept collaboration",        mimeType: "application/json" },
     "POST /skills/co-create":    { accepts: [{ scheme: "exact", price: "$0.005", network: NETWORK, payTo }], description: "Co-create a skill",           mimeType: "application/json" },
-  }, server));
+  }, x402Server));
 }
 
 // ─── Database helpers ─────────────────────────────────────────────────────────
