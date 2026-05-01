@@ -1,5 +1,8 @@
 import "dotenv/config";
 import express from "express";
+import { fileURLToPath } from 'url';
+import path from 'path';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import { paymentMiddleware, x402ResourceServer } from "@x402/express";
@@ -118,6 +121,7 @@ app.get('/agents',    (req, res) => res.sendFile('agents.html',    { root: './pu
 app.get('/spark',     (req, res) => res.sendFile('task-spark.html',{ root: './public' }));
 app.get('/how-it-works', (req, res) => res.sendFile('how-it-works.html', { root: './public' }));
 app.get('/marketplace',  (req, res) => res.sendFile('marketplace.html',  { root: './public' }));
+app.get('/dashboard',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
 
 // ── CONK citizenship status — public, no secrets ─────────────────────────────
 app.get('/conk/citizens', (req, res) => res.json({
