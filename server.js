@@ -2203,15 +2203,17 @@ app.post('/conk/test/run-phase1', async (req, res) => {
       flareTest.status = 'RUNNING';
       try {
         const zkProxy = process.env.CONK_PROXY_URL || 'https://conk-zkproxy-v2.italktonumbers.workers.dev';
+        const flareCastId = soundedCasts['web'] || targetCastId || 'test';
         const flareRes = await fetch(`${zkProxy}/flare`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            toEmail:    'franklin@axiomtide.com',
-            fromVessel: VESSEL_IDS['web'],
-            castId:     soundedCasts['web'] || targetCastId || 'test',
-            hook:       '[PHASE 1 TEST] Flare from W.E.B.',
-            preview:    'AgentSpark Phase 1 Flare test',
+            to:      'franklin@axiomtide.com',
+            hook:    '[PHASE 1 TEST] Flare from W.E.B.',
+            body:    'AgentSpark Phase 1 Flare test — W.E.B. agent sounded on CONK mainnet.',
+            price:   0.001,
+            castId:  flareCastId,
+            castUrl: `https://conk.app/cast/${flareCastId}`,
           }),
           signal: AbortSignal.timeout(10000),
         });
@@ -2242,10 +2244,12 @@ app.post('/conk/test/run-phase1', async (req, res) => {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            castId:       targetCastId,
-            authorVessel: VESSEL_IDS['web'],
-            toEmail:      'franklin@axiomtide.com',
-            message:      'Phase 1 Return Flare test',
+            to:         'franklin@axiomtide.com',
+            hook:       '[PHASE 1 TEST] Return Flare from W.E.B.',
+            castId:     targetCastId,
+            amount:     0.001,
+            note:       'AgentSpark Phase 1 Return Flare test — full cycle verified.',
+            claimedAt:  Date.now(),
           }),
           signal: AbortSignal.timeout(10000),
         });
