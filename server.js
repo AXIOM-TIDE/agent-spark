@@ -9,6 +9,7 @@ import { WebSocketServer } from "ws";
 // x402 / Coinbase legacy payment rail removed — CONK is the payment protocol.
 import { initAllConkCitizens, listConkCitizens } from "./src/conk/citizenship.js";
 import { startTwitterDaemon } from "./src/conk/twitter-daemon.js";
+import { startSparkDaemon }   from "./src/conk/spark-daemon.js";
 import { createAgentConkClient } from "./src/conk/agent-citizen.js";
 import { AGENTS } from "./src/config/agents.js";
 import { bcs }   from '@mysten/sui/bcs';
@@ -327,6 +328,7 @@ async function runAutoRelease() {
 function startAutoReleaseChecker() {
   console.log("[ESCROW] Auto-release checker started (hourly)");
   startTwitterDaemon();
+  startSparkDaemon();
   runAutoRelease();
   setInterval(runAutoRelease, 60 * 60 * 1000);
 }
