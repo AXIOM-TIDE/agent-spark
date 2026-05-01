@@ -81,14 +81,16 @@ async function gatherFleetData(client) {
 // ─── Build and sign the fleet report Cast ─────────────────────────────────────
 
 async function soundFleetReport() {
-  const keyHex = (process.env.SPARK_CONK_PRIVATE_KEY || '').replace('0x', '');
-  if (!keyHex) {
+  const rawKey = process.env.SPARK_CONK_PRIVATE_KEY || '';
+  if (!rawKey) {
     console.warn('[spark-daemon] SPARK_CONK_PRIVATE_KEY not set — skipping report');
     return;
   }
 
   const client = new SuiClient({ url: SUI_RPC });
-  const kp     = Ed25519Keypair.fromSecretKey(Buffer.from(keyHex, 'hex'));
+  const kp     = rawKey.startsWith('suiprivkey')
+    ? Ed25519Keypair.fromSecretKey(rawKey)
+    : Ed25519Keypair.fromSecretKey(Buffer.from(rawKey.replace('0x',''), 'hex'));
   const sender = kp.getPublicKey().toSuiAddress();
   const enc    = new TextEncoder();
   const now    = new Date();
