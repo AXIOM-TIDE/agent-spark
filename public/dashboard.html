@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgentSpark — CONK Command Center</title>
+<style>
+  :root {
+    --bg:      #050505;
+    --surface: #0c0c0c;
+    --border:  #1a1a1a;
+    --green:   #00ff88;
+    --green-dim: #00aa55;
+    --cyan:    #00ccff;
+    --yellow:  #ffcc00;
+    --red:     #ff4444;
+    --text:    #c8c8c8;
+    --muted:   #555;
+    --header:  #e8e8e8;
+    --font: 'Courier New', Courier, monospace;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 13px;
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 16px;
+  }
+
+  /* ── HEADER ────────────────────────────────── */
+  .header {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .header-left { display: flex; align-items: center; gap: 14px; }
+
+  .logo {
+    font-size: 15px;
+    font-weight: bold;
+    color: var(--green);
+    letter-spacing: 2px;
+  }
+
+  .logo span { color: var(--muted); }
+
+  .package-badge {
+    font-size: 10px;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 2px 7px;
+    letter-spacing: 1px;
+  }
+
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .live-dot {
+    width: 8px; height: 8px;
+    background: var(--green);
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .sync-status { color: var(--text); }
+  .sync-status.syncing { color: var(--yellow); }
+  .sync-status.error   { color: var(--red); }
+
+  /* ── SECTION HEADERS ───────────────────────── */
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    margin-top: 24px;
+    font-size: 11px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .section-header::before {
+    content: '';
+    display: inline-block;
+    width: 3px; height: 12px;
+    background: var(--green);
+  }
+
+  .section-header .badge {
+    margin-left: auto;
+    color: var(--green);
+    font-size: 11px;
+  }
+
+  /* ── CITIZEN GRID ──────────────────────────── */
+  .citizens-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+  }
+
+  @media (max-width: 900px) {
+    .citizens-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 580px) {
+    .citizens-grid { grid-template-columns: 1fr; }
+  }
+
+  .citizen-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    position: relative;
+    transition: border-color 0.2s;
+  }
+
+  .citizen-card:hover { border-color: var(--green-dim); }
+
+  .citizen-card.franklin { border-top: 2px solid var(--green); }
+  .citizen-card.railway  { border-top: 2px solid var(--cyan); }
+
+  .citizen-name {
+    font-size: 14px;
+    font-weight: bold;
+    color: var(--green);
+    letter-spacing: 1px;
+    margin-bottom: 2px;
+  }
+
+  .citizen-role {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    margin-bottom: 2px;
+    text-transform: uppercase;
+  }
+
+  .citizen-node {
+    font-size: 10px;
+    color: var(--cyan);
+    margin-bottom: 12px;
+  }
+
+  .citizen-balances {
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+    margin-bottom: 10px;
+  }
+
+  .balance-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+  }
+
+  .balance-label {
+    font-size: 10px;
+    color: var(--muted);
+    letter-spacing: 1px;
+  }
+
+  .balance-value {
+    font-size: 13px;
+    color: var(--header);
+    font-weight: bold;
+  }
+
+  .balance-value.loading { color: var(--muted); }
+  .balance-value.error   { color: var(--red); font-size: 10px; }
+  .balance-value.usdc    { color: var(--green); }
+  .balance-value.sui     { color: var(--cyan); }
+
+  .citizen-addresses {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+
+  .addr-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 3px;
+  }
+
+  .addr-label {
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    min-width: 32px;
+  }
+
+  .addr-value {
+    font-size: 9px;
+    color: var(--muted);
+    cursor: pointer;
+    transition: color 0.15s;
+  }
+  .addr-value:hover { color: var(--text); }
+
+  /* ── TRANSACTION FEED ─────────────────────── */
+  .tx-feed {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 0;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+
+  .tx-empty {
+    padding: 20px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .tx-row {
+    display: grid;
+    grid-template-columns: 80px 180px 1fr 80px 80px;
+    gap: 8px;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    align-items: center;
+    transition: background 0.1s;
+  }
+
+  .tx-row:hover { background: rgba(0,255,136,0.03); }
+
+  .tx-time   { color: var(--muted); }
+  .tx-type   { color: var(--green); letter-spacing: 0.5px; font-weight: bold; }
+  .tx-sender { color: var(--text); }
+  .tx-amount { color: var(--yellow); text-align: right; }
+  .tx-digest {
+    color: var(--muted);
+    font-size: 9px;
+    cursor: pointer;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tx-digest:hover { color: var(--cyan); }
+
+  .tx-feed-header {
+    display: grid;
+    grid-template-columns: 80px 180px 1fr 80px 80px;
+    gap: 8px;
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.02);
+    position: sticky; top: 0;
+  }
+
+  /* ── TEST RESULTS ─────────────────────────── */
+  .test-table {
+    background: var(--surface);
+    border: 1px solid var(--border);
+  }
+
+  .test-row {
+    display: grid;
+    grid-template-columns: 100px 1fr 1fr;
+    gap: 8px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 11px;
+    align-items: center;
+  }
+
+  .test-row:hover { background: rgba(0,255,136,0.02); }
+
+  .test-status {
+    font-weight: bold;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+  }
+  .test-status.PENDING { color: var(--muted); }
+  .test-status.PASS    { color: var(--green); }
+  .test-status.FAIL    { color: var(--red); }
+  .test-status.RUNNING { color: var(--yellow); animation: blink 1s step-end infinite; }
+
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .test-label { color: var(--text); }
+  .test-details { color: var(--muted); font-size: 10px; text-align: right; }
+
+  .test-table-header {
+    display: grid;
+    grid-template-columns: 100px 1fr 1fr;
+    gap: 8px;
+    padding: 6px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 9px;
+    color: var(--muted);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    background: rgba(255,255,255,0.02);
+  }
+
+  /* ── FOOTER ────────────────────────────────── */
+  .footer {
+    margin-top: 24px;
+    padding: 10px 0;
+    border-top: 1px solid var(--border);
+    font-size: 10px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+
+  .footer a { color: var(--muted); text-decoration: none; }
+  .footer a:hover { color: var(--cyan); }
+
+  /* ── SCROLLBAR ─────────────────────────────── */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* ── PROGRESS BAR ─────────────────────────── */
+  .refresh-bar {
+    height: 2px;
+    background: var(--border);
+    margin-bottom: 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .refresh-bar-fill {
+    height: 100%;
+    background: var(--green-dim);
+    width: 0%;
+    transition: width linear;
+  }
+
+  /* ── ERROR BANNER ─────────────────────────── */
+  .error-banner {
+    background: rgba(255,68,68,0.1);
+    border: 1px solid var(--red);
+    padding: 10px 16px;
+    margin-bottom: 16px;
+    font-size: 11px;
+    color: var(--red);
+    display: none;
+  }
+  .error-banner.visible { display: block; }
+
+  /* Treasury summary */
+  .treasury-row {
+    display: flex;
+    gap: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 12px 18px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .treasury-item { display: flex; flex-direction: column; gap: 2px; }
+  .treasury-label { font-size: 9px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+  .treasury-value { font-size: 14px; color: var(--green); font-weight: bold; }
+  .treasury-value.loading { color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════ HEADER ══════════════ -->
+<div class="header">
+  <div class="header-left">
+    <div class="logo">⬡ AXIOM TIDE <span>//</span> AGENTSPARK</div>
+    <div class="package-badge">CONK MAINNET</div>
+    <div class="package-badge" id="pkg-badge">0x8cde...64b2</div>
+  </div>
+  <div class="header-right">
+    <span><span class="live-dot"></span>&nbsp;LIVE</span>
+    <span>REFRESH: <span id="countdown">30</span>s</span>
+    <span class="sync-status" id="sync-status">SYNCING...</span>
+  </div>
+</div>
+
+<div class="refresh-bar">
+  <div class="refresh-bar-fill" id="refresh-fill"></div>
+</div>
+
+<div class="error-banner" id="error-banner">
+  ⚠ RPC ERROR — <span id="error-msg"></span>
+</div>
+
+<!-- ══════════════ FLEET TREASURY SUMMARY ══════════════ -->
+<div class="section-header">
+  Fleet Treasury
+  <span class="badge" id="treasury-badge">LOADING...</span>
+</div>
+
+<div class="treasury-row" id="treasury-row">
+  <div class="treasury-item">
+    <div class="treasury-label">Total USDC</div>
+    <div class="treasury-value loading" id="total-usdc">—</div>
+  </div>
+  <div class="treasury-item">
+    <div class="treasury-label">Total SUI (Gas)</div>
+    <div class="treasury-value loading" id="total-sui">—</div>
+  </div>
+  <div class="treasury-item">
+    <div class="treasury-label">Citizens Online</div>
+    <div class="treasury-value" id="citizens-online">6 / 6</div>
+  </div>
+  <div class="treasury-item">
+    <div class="treasury-label">Protocol</div>
+    <div class="treasury-value" style="color:var(--cyan)">CONK v1</div>
+  </div>
+  <div class="treasury-item">
+    <div class="treasury-label">Return Flare</div>
+    <div class="treasury-value" style="color:var(--green)">48H WINDOW</div>
+  </div>
+</div>
+
+<!-- ══════════════ CITIZEN FLEET ══════════════ -->
+<div class="section-header">
+  Citizen Fleet
+  <span class="badge" id="fleet-badge">6 CITIZENS</span>
+</div>
+
+<div class="citizens-grid" id="citizens-grid">
+  <!-- Cards injected by JS -->
+</div>
+
+<!-- ══════════════ TRANSACTION FEED ══════════════ -->
+<div class="section-header">
+  CONK Transaction Feed
+  <span class="badge" id="feed-badge">LOADING...</span>
+</div>
+
+<div class="tx-feed">
+  <div class="tx-feed-header">
+    <span>TIME (UTC)</span>
+    <span>EVENT TYPE</span>
+    <span>SENDER</span>
+    <span style="text-align:right">AMOUNT</span>
+    <span style="text-align:right">TX DIGEST</span>
+  </div>
+  <div id="tx-feed-body">
+    <div class="tx-empty">⏳ LOADING EVENTS FROM CONK MAINNET...</div>
+  </div>
+</div>
+
+<!-- ══════════════ TEST RESULTS ══════════════ -->
+<div class="section-header">
+  Phase 1 Test Results
+  <span class="badge" id="test-badge">0 / 10 PASSING</span>
+</div>
+
+<div class="test-table">
+  <div class="test-table-header">
+    <span>STATUS</span>
+    <span>TEST</span>
+    <span style="text-align:right">DETAILS</span>
+  </div>
+  <div id="test-table-body">
+    <!-- injected by JS -->
+  </div>
+</div>
+
+<!-- ══════════════ FOOTER ══════════════ -->
+<div class="footer">
+  <div>
+    <a href="https://agentspark.network" target="_blank">agentspark.network</a>
+    &nbsp;|&nbsp;
+    <a href="https://suiexplorer.com/object/0x8cde30c2af7523193689e2f3eaca6dc4fadf6fd486471a6c31b14bc9db5164b2?network=mainnet" target="_blank">CONK on Sui Explorer ↗</a>
+    &nbsp;|&nbsp;
+    AXIOM TIDE LLC — CONK COMMAND CENTER v1.0
+  </div>
+  <div id="last-sync-full">LAST SYNC: —</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════
+
+const CONK_PACKAGE  = '0x8cde30c2af7523193689e2f3eaca6dc4fadf6fd486471a6c31b14bc9db5164b2';
+const REFRESH_MS    = 30_000;
+
+const CITIZENS = [
+  {
+    id: 'franklin', name: 'FRANKLIN', role: 'CTO / ORCHESTRATOR', node: 'MAC-MINI',
+    cardClass: 'franklin',
+    address: '0x18b1c3d9b8483edd80b70770d70d38cc6102bfa0495e06aea6cf12e5ed1674a6',
+    harbor:  '0x9c39d5a9dbc429d68f001773222b12e3f1c85f454cfe1396cdc49d68551cbabc',
+    vessel:  '0x83f2a3a446ceb66047d3e6e713087d3288854ebab24c8525fca31c8fa5ccf2ef',
+  },
+  {
+    id: 'neural', name: 'N.E.U.R.A.L.', role: 'NEURAL / AI AGENT', node: 'RAILWAY',
+    cardClass: 'railway',
+    address: '0x8b3922c29dba87d032ef355ab255aa390ddbabe08d4a958215728fe3594d0c66',
+    harbor:  '0xcd07d8a7889ed47bd72a70448d425f9dd9ea009fd7bad817dfcf85ed7efd0dfd',
+    vessel:  '0x6e0481e37532546db0c266e5db92f136ce9257cf49fa243aa060352916df03e6',
+  },
+  {
+    id: 'aristo', name: 'A.R.I.S.T.O.', role: 'ARB / STRATEGY AGENT', node: 'RAILWAY',
+    cardClass: 'railway',
+    address: '0x91a66a1c66b95c48da43b98499998506f6df25f98b1f9e735c61b2e77baf75c4',
+    harbor:  '0x6cc728b480b347c3d922cecee31c62daad94918f5a2d6cdfbcc9a92901a40b7f',
+    vessel:  '0xfc094d623d7e26e435d6413477f06f450c13d1b8bda16b45bba2093085f997b1',
+  },
+  {
+    id: 'crypto', name: 'C.R.Y.P.T.O.', role: 'CRYPTO TRADING AGENT', node: 'RAILWAY',
+    cardClass: 'railway',
+    address: '0x2720e5976c501843f786514faaad350f5091ac32f169a4c184865792e7b23296',
+    harbor:  '0xfa28cda3d46729ff71ad6ca710dfe13c8e9a532b920068461d022d28a1f2eaac',
+    vessel:  '0xee61dbc7fd5b6f231952a243e53daf91ad7afce7e0518c65acb1e543012a3dd9',
+  },
+  {
+    id: 'spark', name: 'S.P.A.R.K.', role: 'CORE SPARK AGENT', node: 'RAILWAY',
+    cardClass: 'railway',
+    address: '0x32cb9f2f728fd834a693461ecfbe6e41a17e3bfc84fc8dc1cdc9de664434a316',
+    harbor:  '0xb4538c85d4a6897e5e2e03e43b4f1de7ba77d2d2cee67f0026a9a585bd1e5ade',
+    vessel:  '0x8b801ce16d09a505820efe35e12037cde52226c5ba6667bb5bfce4dd30420765',
+  },
+  {
+    id: 'web', name: 'W.E.B.', role: 'FRONTEND / NETWORK', node: 'RAILWAY',
+    cardClass: 'railway',
+    address: '0xbe85389fb5625e9871e136aeb420c5f1a5959ec977bb148e325220db035e3d9a',
+    harbor:  '0x36fce634887f6a43bab6e28b334b818ab7f34b2d14ec8f7818a7e5c8ceb0ad5e',
+    vessel:  '0x52bf2dff2a4e067566def4192e60895057e1a21e85fe0684f5971f8c4b7c3862',
+  },
+];
+
+const TEST_DEFS = [
+  { id: 'sound-franklin', label: 'Sound Cast — FRANKLIN' },
+  { id: 'sound-neural',   label: 'Sound Cast — N.E.U.R.A.L.' },
+  { id: 'sound-aristo',   label: 'Sound Cast — A.R.I.S.T.O.' },
+  { id: 'sound-crypto',   label: 'Sound Cast — C.R.Y.P.T.O.' },
+  { id: 'sound-spark',    label: 'Sound Cast — S.P.A.R.K.' },
+  { id: 'sound-web',      label: 'Sound Cast — W.E.B.' },
+  { id: 'read-cross',     label: 'Read Cast — Cross-Agent' },
+  { id: 'flare-send',     label: 'Send Flare' },
+  { id: 'return-flare',   label: 'Return Flare — Full Cycle' },
+  { id: 'settlement',     label: '97 / 3 Settlement Verified' },
+];
+
+// ═══════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════
+
+function trunc(addr, n = 8) {
+  if (!addr) return '—';
+  return addr.slice(0, 2 + n) + '...' + addr.slice(-4);
+}
+
+function fmtUsdc(raw) {
+  if (raw == null) return '—';
+  const n = parseInt(raw) / 1_000_000;
+  return '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+}
+
+function fmtSui(raw) {
+  if (raw == null) return '—';
+  const n = parseInt(raw) / 1_000_000_000;
+  return n.toFixed(4) + ' SUI';
+}
+
+function fmtTime(ms) {
+  if (!ms) return '—';
+  const d = new Date(parseInt(ms));
+  return d.toISOString().slice(11, 19) + ' UTC';
+}
+
+function eventLabel(e) {
+  if (!e.type) return 'UNKNOWN';
+  const parts = e.type.split('::');
+  const mod   = (parts[parts.length - 2] || '').toUpperCase();
+  const ev    = (parts[parts.length - 1] || '').toUpperCase()
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')   // split camelCase
+    .replace(/([a-z])([A-Z])/g, '$1_$2')
+    .toUpperCase();
+  return mod + '::' + ev;
+}
+
+function guessAmount(e) {
+  const j = e.parsedJson || {};
+  if (j.price_cents)    return '$' + (j.price_cents / 100).toFixed(3);
+  if (j.amount_cents)   return '$' + (j.amount_cents / 100).toFixed(3);
+  if (j.fee_cents)      return '$' + (j.fee_cents / 100).toFixed(3);
+  if (j.balance)        return '$' + (parseInt(j.balance) / 1_000_000).toFixed(6);
+  if (j.fuel_amount)    return '$' + (parseInt(j.fuel_amount) / 1_000_000).toFixed(3);
+  return '—';
+}
+
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).catch(() => {});
+}
+
+function suiExplorerTx(digest) {
+  return `https://suiexplorer.com/txblock/${digest}?network=mainnet`;
+}
+
+// ═══════════════════════════════════════════════════
+// RENDER CITIZENS (skeleton)
+// ═══════════════════════════════════════════════════
+
+function renderCitizenCards() {
+  const grid = document.getElementById('citizens-grid');
+  grid.innerHTML = CITIZENS.map(c => `
+    <div class="citizen-card ${c.cardClass}">
+      <div class="citizen-name">${c.name}</div>
+      <div class="citizen-role">${c.role}</div>
+      <div class="citizen-node">▸ ${c.node}</div>
+      <div class="citizen-balances">
+        <div class="balance-row">
+          <span class="balance-label">USDC (HARBOR)</span>
+          <span class="balance-value usdc loading" id="usdc-${c.id}">LOADING...</span>
+        </div>
+        <div class="balance-row">
+          <span class="balance-label">SUI (GAS)</span>
+          <span class="balance-value sui loading" id="sui-${c.id}">LOADING...</span>
+        </div>
+      </div>
+      <div class="citizen-addresses">
+        <div class="addr-row">
+          <span class="addr-label">ADDR</span>
+          <span class="addr-value" title="${c.address}" onclick="copyToClipboard('${c.address}')">${trunc(c.address)}</span>
+        </div>
+        <div class="addr-row">
+          <span class="addr-label">HBR</span>
+          <span class="addr-value" title="${c.harbor}" onclick="copyToClipboard('${c.harbor}')">${trunc(c.harbor)}</span>
+        </div>
+        <div class="addr-row">
+          <span class="addr-label">VSL</span>
+          <span class="addr-value" title="${c.vessel}" onclick="copyToClipboard('${c.vessel}')">${trunc(c.vessel)}</span>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════════════
+// RENDER TEST RESULTS
+// ═══════════════════════════════════════════════════
+
+function renderTests(results) {
+  const body = document.getElementById('test-table-body');
+  const map  = {};
+  (results || []).forEach(r => { map[r.id] = r; });
+
+  const rows = TEST_DEFS.map(def => {
+    const r = map[def.id] || { status: 'PENDING', details: null };
+    const icon = { PASS: '✓', FAIL: '✗', PENDING: '○', RUNNING: '◎' }[r.status] || '○';
+    return `
+      <div class="test-row">
+        <span class="test-status ${r.status}">${icon}&nbsp;${r.status}</span>
+        <span class="test-label">${def.label}</span>
+        <span class="test-details">${r.details || '—'}</span>
+      </div>
+    `;
+  });
+
+  body.innerHTML = rows.join('');
+
+  const passing = (results || []).filter(r => r.status === 'PASS').length;
+  document.getElementById('test-badge').textContent = `${passing} / ${TEST_DEFS.length} PASSING`;
+}
+
+// ═══════════════════════════════════════════════════
+// RENDER TX FEED
+// ═══════════════════════════════════════════════════
+
+function renderFeed(events) {
+  const body = document.getElementById('tx-feed-body');
+  if (!events || events.length === 0) {
+    body.innerHTML = '<div class="tx-empty">NO EVENTS FOUND FOR THIS PACKAGE</div>';
+    document.getElementById('feed-badge').textContent = '0 EVENTS';
+    return;
+  }
+
+  document.getElementById('feed-badge').textContent = `${events.length} EVENTS`;
+
+  const rows = events.map(e => {
+    const digest = e.id?.txDigest || '';
+    const label  = eventLabel(e);
+    const time   = fmtTime(e.timestampMs);
+    const sender = e.sender ? trunc(e.sender) : '—';
+    const amount = guessAmount(e);
+    const shortDigest = digest ? digest.slice(0, 8) + '...' : '—';
+
+    return `
+      <div class="tx-row">
+        <span class="tx-time">${time}</span>
+        <span class="tx-type">${label}</span>
+        <span class="tx-sender" title="${e.sender || ''}">${sender}</span>
+        <span class="tx-amount">${amount}</span>
+        <span class="tx-digest"
+              title="${digest}"
+              onclick="window.open('${suiExplorerTx(digest)}','_blank')">${shortDigest}</span>
+      </div>
+    `;
+  });
+
+  body.innerHTML = rows.join('');
+}
+
+// ═══════════════════════════════════════════════════
+// UPDATE BALANCES
+// ═══════════════════════════════════════════════════
+
+function updateBalances(citizens) {
+  let totalUsdc = 0;
+  let totalSui  = 0;
+
+  citizens.forEach(c => {
+    const usdcEl = document.getElementById(`usdc-${c.id}`);
+    const suiEl  = document.getElementById(`sui-${c.id}`);
+
+    if (c.usdc != null) {
+      usdcEl.textContent = '$' + c.usdc.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+      usdcEl.classList.remove('loading', 'error');
+      totalUsdc += c.usdc;
+    } else {
+      usdcEl.textContent = 'ERR';
+      usdcEl.classList.add('error');
+    }
+
+    if (c.sui != null) {
+      suiEl.textContent = c.sui.toFixed(4) + ' SUI';
+      suiEl.classList.remove('loading', 'error');
+      totalSui += c.sui;
+    } else {
+      suiEl.textContent = 'ERR';
+      suiEl.classList.add('error');
+    }
+  });
+
+  document.getElementById('total-usdc').textContent =
+    '$' + totalUsdc.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  document.getElementById('total-usdc').classList.remove('loading');
+
+  document.getElementById('total-sui').textContent = totalSui.toFixed(4) + ' SUI';
+  document.getElementById('total-sui').classList.remove('loading');
+
+  document.getElementById('treasury-badge').textContent = 'FLEET WALLET';
+}
+
+// ═══════════════════════════════════════════════════
+// MAIN FETCH
+// ═══════════════════════════════════════════════════
+
+async function refresh() {
+  const statusEl = document.getElementById('sync-status');
+  const errorEl  = document.getElementById('error-banner');
+  const errorMsg = document.getElementById('error-msg');
+
+  statusEl.textContent = 'SYNCING...';
+  statusEl.className   = 'sync-status syncing';
+
+  try {
+    const res  = await fetch('/conk/dashboard-data');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    // Balances
+    if (data.citizens) updateBalances(data.citizens);
+
+    // Events
+    if (data.events !== undefined) renderFeed(data.events);
+
+    // Test results
+    if (data.testResults) renderTests(data.testResults);
+
+    // Status
+    const now = new Date(data.synced || Date.now());
+    statusEl.textContent = 'LIVE';
+    statusEl.className   = 'sync-status';
+    document.getElementById('last-sync-full').textContent =
+      'LAST SYNC: ' + now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+    errorEl.classList.remove('visible');
+
+  } catch (err) {
+    statusEl.textContent = 'ERROR';
+    statusEl.className   = 'sync-status error';
+    errorMsg.textContent = err.message;
+    errorEl.classList.add('visible');
+    console.error('[Dashboard] fetch error:', err);
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// COUNTDOWN + AUTO-REFRESH
+// ═══════════════════════════════════════════════════
+
+let countdown    = 30;
+let refreshTimer = null;
+let fillTimer    = null;
+
+function startRefreshCycle() {
+  countdown = 30;
+  document.getElementById('countdown').textContent = countdown;
+
+  const fill = document.getElementById('refresh-fill');
+  fill.style.transition = 'none';
+  fill.style.width = '0%';
+
+  setTimeout(() => {
+    fill.style.transition = `width ${REFRESH_MS}ms linear`;
+    fill.style.width = '100%';
+  }, 50);
+
+  clearInterval(fillTimer);
+  fillTimer = setInterval(() => {
+    countdown--;
+    document.getElementById('countdown').textContent = Math.max(0, countdown);
+    if (countdown <= 0) {
+      clearInterval(fillTimer);
+    }
+  }, 1000);
+
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    refresh().then(() => startRefreshCycle());
+  }, REFRESH_MS);
+}
+
+// ═══════════════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════════════
+
+renderCitizenCards();
+renderTests([]);
+
+refresh().then(() => startRefreshCycle());
+</script>
+</body>
+</html>

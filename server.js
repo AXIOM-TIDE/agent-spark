@@ -11,6 +11,50 @@ import { initAllConkCitizens, listConkCitizens } from "./src/conk/citizenship.js
 const conkCitizens = await initAllConkCitizens();
 const webConkCitizen = conkCitizens.find(c => c.agentId === 'web');
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONK DASHBOARD — Citizen registry + live Sui RPC data
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const SUI_RPC       = 'https://fullnode.mainnet.sui.io:443';
+const USDC_TYPE     = '0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC';
+const SUI_COIN_TYPE = '0x2::sui::SUI';
+const CONK_PACKAGE  = '0x8cde30c2af7523193689e2f3eaca6dc4fadf6fd486471a6c31b14bc9db5164b2';
+
+const DASHBOARD_CITIZENS = [
+  { id: 'franklin', name: 'FRANKLIN',    role: 'CTO / ORCHESTRATOR',    node: 'mac-mini', address: '0x18b1c3d9b8483edd80b70770d70d38cc6102bfa0495e06aea6cf12e5ed1674a6', harbor: '0x9c39d5a9dbc429d68f001773222b12e3f1c85f454cfe1396cdc49d68551cbabc', vessel: '0x83f2a3a446ceb66047d3e6e713087d3288854ebab24c8525fca31c8fa5ccf2ef' },
+  { id: 'neural',   name: 'N.E.U.R.A.L.', role: 'NEURAL / AI AGENT',   node: 'railway',  address: '0x8b3922c29dba87d032ef355ab255aa390ddbabe08d4a958215728fe3594d0c66', harbor: '0xcd07d8a7889ed47bd72a70448d425f9dd9ea009fd7bad817dfcf85ed7efd0dfd', vessel: '0x6e0481e37532546db0c266e5db92f136ce9257cf49fa243aa060352916df03e6' },
+  { id: 'aristo',   name: 'A.R.I.S.T.O.', role: 'ARB / STRATEGY AGENT', node: 'railway', address: '0x91a66a1c66b95c48da43b98499998506f6df25f98b1f9e735c61b2e77baf75c4', harbor: '0x6cc728b480b347c3d922cecee31c62daad94918f5a2d6cdfbcc9a92901a40b7f', vessel: '0xfc094d623d7e26e435d6413477f06f450c13d1b8bda16b45bba2093085f997b1' },
+  { id: 'crypto',   name: 'C.R.Y.P.T.O.', role: 'CRYPTO TRADING AGENT', node: 'railway', address: '0x2720e5976c501843f786514faaad350f5091ac32f169a4c184865792e7b23296', harbor: '0xfa28cda3d46729ff71ad6ca710dfe13c8e9a532b920068461d022d28a1f2eaac', vessel: '0xee61dbc7fd5b6f231952a243e53daf91ad7afce7e0518c65acb1e543012a3dd9' },
+  { id: 'spark',    name: 'S.P.A.R.K.',    role: 'CORE SPARK AGENT',    node: 'railway',  address: '0x32cb9f2f728fd834a693461ecfbe6e41a17e3bfc84fc8dc1cdc9de664434a316', harbor: '0xb4538c85d4a6897e5e2e03e43b4f1de7ba77d2d2cee67f0026a9a585bd1e5ade', vessel: '0x8b801ce16d09a505820efe35e12037cde52226c5ba6667bb5bfce4dd30420765' },
+  { id: 'web',      name: 'W.E.B.',         role: 'FRONTEND / NETWORK',  node: 'railway',  address: '0xbe85389fb5625e9871e136aeb420c5f1a5959ec977bb148e325220db035e3d9a', harbor: '0x36fce634887f6a43bab6e28b334b818ab7f34b2d14ec8f7818a7e5c8ceb0ad5e', vessel: '0x52bf2dff2a4e067566def4192e60895057e1a21e85fe0684f5971f8c4b7c3862' },
+];
+
+async function suiRpc(method, params) {
+  const r = await fetch(SUI_RPC, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+    signal:  AbortSignal.timeout(8000),
+  });
+  const d = await r.json();
+  if (d.error) throw new Error(d.error.message || JSON.stringify(d.error));
+  return d.result;
+}
+
+// In-memory test results — updated by PATCH /conk/test-results/:id
+let conkTestResults = [
+  { id: 'sound-franklin', label: 'Sound Cast — FRANKLIN',       status: 'PENDING', details: null, updatedAt: null },
+  { id: 'sound-neural',   label: 'Sound Cast — N.E.U.R.A.L.',  status: 'PENDING', details: null, updatedAt: null },
+  { id: 'sound-aristo',   label: 'Sound Cast — A.R.I.S.T.O.',  status: 'PENDING', details: null, updatedAt: null },
+  { id: 'sound-crypto',   label: 'Sound Cast — C.R.Y.P.T.O.',  status: 'PENDING', details: null, updatedAt: null },
+  { id: 'sound-spark',    label: 'Sound Cast — S.P.A.R.K.',    status: 'PENDING', details: null, updatedAt: null },
+  { id: 'sound-web',      label: 'Sound Cast — W.E.B.',        status: 'PENDING', details: null, updatedAt: null },
+  { id: 'read-cross',     label: 'Read Cast — Cross-Agent',    status: 'PENDING', details: null, updatedAt: null },
+  { id: 'flare-send',     label: 'Send Flare',                 status: 'PENDING', details: null, updatedAt: null },
+  { id: 'return-flare',   label: 'Return Flare — Full Cycle',  status: 'PENDING', details: null, updatedAt: null },
+  { id: 'settlement',     label: '97/3 Settlement Verified',   status: 'PENDING', details: null, updatedAt: null },
+];
+
 // ── ESCROW CONSTANTS ──────────────────────────────────────
 const PLATFORM_CUT         = 0.05;
 const AUTO_RELEASE_DAYS    = 3;
@@ -1813,6 +1857,89 @@ app.post('/floor/register', async (req, res) => {
     if (isStaff) agentCooldowns[name] = Date.now() - STAFF_COOLDOWN_MS;
     return res.json({ success: true, name, registered: true });
   } catch (err) { return res.status(500).json({ error: err.message }); }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONK DASHBOARD ROUTES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// Serve the dashboard HTML
+app.get('/dashboard', (req, res) => {
+  res.sendFile('dashboard.html', { root: './public' });
+});
+
+// Live CONK data endpoint — aggregates Sui RPC for all 6 citizens
+app.get('/conk/dashboard-data', async (req, res) => {
+  try {
+    // Fan out: 12 balance calls + 1 events call in parallel
+    const balanceCalls = DASHBOARD_CITIZENS.flatMap(c => [
+      suiRpc('suix_getBalance', [c.address, USDC_TYPE]).catch(() => null),
+      suiRpc('suix_getBalance', [c.address, SUI_COIN_TYPE]).catch(() => null),
+    ]);
+
+    const eventsCall = suiRpc('suix_queryEvents', [
+      { Package: CONK_PACKAGE }, null, 20, true
+    ]).catch(() => ({ data: [] }));
+
+    const [balances, eventsResult] = await Promise.all([
+      Promise.all(balanceCalls),
+      eventsCall,
+    ]);
+
+    const citizens = DASHBOARD_CITIZENS.map((c, i) => {
+      const usdcRaw = balances[i * 2];
+      const suiRaw  = balances[i * 2 + 1];
+      return {
+        ...c,
+        usdc: usdcRaw ? parseInt(usdcRaw.totalBalance ?? '0') / 1_000_000        : null,
+        sui:  suiRaw  ? parseInt(suiRaw.totalBalance  ?? '0') / 1_000_000_000    : null,
+      };
+    });
+
+    return res.json({
+      citizens,
+      events:      (eventsResult?.data ?? []).slice(0, 20),
+      testResults: conkTestResults,
+      conkPackage: CONK_PACKAGE,
+      synced:      new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('[dashboard-data]', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Read test results
+app.get('/conk/test-results', (req, res) => res.json(conkTestResults));
+
+// Update a test result (admin-only)
+app.patch('/conk/test-results/:id', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+  if (secret !== process.env.ADMIN_SECRET) return res.status(401).json({ error: 'unauthorized' });
+  const test = conkTestResults.find(t => t.id === req.params.id);
+  if (!test) return res.status(404).json({ error: 'test_not_found' });
+  const { status, details } = req.body || {};
+  if (status)           test.status    = status;   // PENDING | RUNNING | PASS | FAIL
+  if (details !== undefined) test.details = details;
+  test.updatedAt = new Date().toISOString();
+  return res.json(test);
+});
+
+// Bulk update (for test runner automation)
+app.post('/conk/test-results/bulk', (req, res) => {
+  const secret = req.headers['x-admin-secret'];
+  if (secret !== process.env.ADMIN_SECRET) return res.status(401).json({ error: 'unauthorized' });
+  const { results } = req.body || {};
+  if (!Array.isArray(results)) return res.status(400).json({ error: 'results array required' });
+  for (const update of results) {
+    const test = conkTestResults.find(t => t.id === update.id);
+    if (test) {
+      if (update.status)  test.status  = update.status;
+      if (update.details !== undefined) test.details = update.details;
+      test.updatedAt = new Date().toISOString();
+    }
+  }
+  return res.json({ updated: results.length, results: conkTestResults });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
