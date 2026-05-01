@@ -2,6 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { fileURLToPath } from 'url';
 import path from 'path';
+import fs from 'fs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
@@ -122,6 +123,7 @@ app.get('/spark',     (req, res) => res.sendFile('task-spark.html',{ root: './pu
 app.get('/how-it-works', (req, res) => res.sendFile('how-it-works.html', { root: './public' }));
 app.get('/marketplace',  (req, res) => res.sendFile('marketplace.html',  { root: './public' }));
 app.get('/dashboard',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+app.get('/_dbg/fs',      (req, res) => { const pub = path.join(__dirname,'public'); try { res.json({ __dirname, pub, files: fs.readdirSync(pub) }); } catch(e) { res.json({ __dirname, error: e.message }); } });
 
 // ── CONK citizenship status — public, no secrets ─────────────────────────────
 app.get('/conk/citizens', (req, res) => res.json({
@@ -2018,10 +2020,7 @@ async function agentReadCast(readerAgentId, castId, env = process.env) {
   return { readerAgentId, castId, txDigest: digest, address };
 }
 
-// ── Serve the dashboard HTML
-app.get('/dashboard', (req, res) => {
-  res.sendFile('dashboard.html', { root: './public' });
-});
+// (dashboard route moved to top-level at line ~124)
 
 // Live CONK data endpoint — aggregates Sui RPC for all 6 citizens
 app.get('/conk/dashboard-data', async (req, res) => {
