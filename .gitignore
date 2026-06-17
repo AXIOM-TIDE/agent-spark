@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*private*
+*secret*
+*.keystore
+# Runtime
+node_modules/
+*.log
+dist/
+.DS_Store
